@@ -310,19 +310,13 @@ export default function App() {
 
   // Leaderboard listener
   useEffect(() => {
-    if (!user) {
-      setLeaderboard([]);
-      return;
-    }
     const q = query(collection(db, 'leaderboard'), orderBy('score', 'desc'), limit(10));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const entries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LeaderboardEntry));
       setLeaderboard(entries);
-    }, (error) => {
-      console.error("Leaderboard listener error:", error);
     });
     return () => unsubscribe();
-  }, [user]);
+  }, []);
 
   const handleLogin = async () => {
     try {
