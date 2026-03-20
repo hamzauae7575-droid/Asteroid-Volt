@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: leaderboard
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required, 1-50 chars) - Player's name
+    //   - score: number (required, positive) - Survival time in seconds
+    //   - timestamp: timestamp (required) - When the score was achieved
+    //   - uid: string (required) - User's unique ID
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "hamza.uae7575@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidScore(data) {
+      return hasRequiredFields(['name', 'score', 'timestamp', 'uid']) &&
+             hasOnlyAllowedFields(['name', 'score', 'timestamp', 'uid']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
+             data.score is number && data.score >= 0 &&
+             data.timestamp is timestamp &&
+             data.uid == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /leaderboard/{scoreId} {
+      // Anyone authenticated can read the leaderboard
+      allow read: if isAuthenticated();
+      
+      // Only authenticated users can create their own score entry
+      allow create: if isAuthenticated() && isValidScore(request.resource.data);
+      
+      // Scores are immutable once posted, only admins can delete
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) && hasOnlyAllowedFields(['name', 'email', 'role', 'photoURL', 'badges', 'completedLevels']) &&
+                             request.resource.data.role == (resource == null ? 'client' : resource.data.role);
+      allow delete: if isAdmin();
+    }
+  }
+}

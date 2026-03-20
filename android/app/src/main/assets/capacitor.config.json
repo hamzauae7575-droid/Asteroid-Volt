@@ -1,0 +1,6 @@
+{
+	"appId": "com.emeraldlaser.game",
+	"appName": "Emerald Laser",
+	"webDir": "dist",
+	"bundledWebRuntime": false
+}
