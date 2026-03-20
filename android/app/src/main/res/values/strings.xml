@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">Emerald Laser</string>
-    <string name="title_activity_main">Emerald Laser</string>
-    <string name="package_name">com.emeraldlaser.game</string>
-    <string name="custom_url_scheme">com.emeraldlaser.game</string>
-</resources>
