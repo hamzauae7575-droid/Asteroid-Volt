@@ -39,18 +39,41 @@
           "type": "array",
           "items": { "type": "number" },
           "description": "List of completed level numbers."
+        },
+        "highestScore": {
+          "type": "number",
+          "description": "Highest score in infinite mode."
         }
       }
+    },
+    "CustomLevel": {
+      "title": "CustomLevel",
+      "description": "A user-created custom level.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "creatorId": { "type": "string" },
+        "creatorName": { "type": "string" },
+        "rubyCount": { "type": "number" },
+        "emeraldCount": { "type": "number" },
+        "starCount": { "type": "number" },
+        "timeLimit": { "type": "number" },
+        "songUrl": { "type": "string" },
+        "plays": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "name", "creatorId", "creatorName", "rubyCount", "emeraldCount", "starCount", "timeLimit", "plays", "createdAt"]
     }
   },
   "firestore": {
-    "leaderboard": {
-      "schema": "Score",
-      "description": "Collection of top scores for Infinite Mode."
-    },
     "users": {
       "schema": "UserProgress",
       "description": "User-specific progress data."
+    },
+    "levels": {
+      "schema": "CustomLevel",
+      "description": "Collection of user-created custom levels."
     }
   }
 }

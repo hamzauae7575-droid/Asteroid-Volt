@@ -13,6 +13,33 @@ service cloud.firestore {
     //   - timestamp: timestamp (required) - When the score was achieved
     //   - uid: string (required) - User's unique ID
     //
+    // Collection: users
+    // Document ID: user ID
+    // Fields:
+    //   - name: string (optional)
+    //   - email: string (optional)
+    //   - role: string
+    //   - badges: array
+    //   - completedLevels: array
+    //   - levelStars: map
+    //   - redDestroyed: number
+    //   - highestScore: number (optional)
+    //
+    // Collection: levels
+    // Document ID: custom level ID
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required, 1-50 chars)
+    //   - creatorId: string (required)
+    //   - creatorName: string (required, 1-50 chars)
+    //   - rubyCount: number (required, >= 0)
+    //   - emeraldCount: number (required, >= 0)
+    //   - starCount: number (required, >= 0)
+    //   - timeLimit: number (required, >= 10)
+    //   - songUrl: string (optional)
+    //   - plays: number (required, >= 0)
+    //   - createdAt: number (required)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -49,27 +76,52 @@ service cloud.firestore {
              data.uid == request.auth.uid;
     }
 
+    function isValidLevel(data) {
+      let hasRequired = hasRequiredFields(['id', 'name', 'creatorId', 'creatorName', 'rubyCount', 'emeraldCount', 'starCount', 'timeLimit', 'plays', 'createdAt']);
+      let hasOnlyAllowed = hasOnlyAllowedFields(['id', 'name', 'creatorId', 'creatorName', 'rubyCount', 'emeraldCount', 'starCount', 'timeLimit', 'songUrl', 'plays', 'createdAt']);
+      return hasRequired && hasOnlyAllowed &&
+             data.id is string && data.id.size() > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
+             data.creatorId == request.auth.uid &&
+             data.creatorName is string && data.creatorName.size() > 0 && data.creatorName.size() <= 50 &&
+             data.rubyCount is number && data.rubyCount >= 0 &&
+             data.emeraldCount is number && data.emeraldCount >= 0 &&
+             data.starCount is number && data.starCount >= 0 &&
+             data.timeLimit is number && data.timeLimit >= 10 &&
+             (!('songUrl' in data) || (data.songUrl is string && data.songUrl.size() <= 500)) &&
+             data.plays is number && data.plays >= 0 &&
+             data.createdAt is number;
+    }
+
+    function isValidLevelUpdate(data, oldData) {
+      // Only allow incrementing plays
+      return data.diff(oldData).affectedKeys().hasOnly(['plays']) &&
+             data.plays == oldData.plays + 1;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
 
     match /leaderboard/{scoreId} {
-      // Anyone authenticated can read the leaderboard
       allow read: if isAuthenticated();
-      
-      // Only authenticated users can create their own score entry
       allow create: if isAuthenticated() && isValidScore(request.resource.data);
-      
-      // Scores are immutable once posted, only admins can delete
       allow update: if false;
       allow delete: if isAdmin();
     }
 
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create, update: if isOwner(userId) && hasOnlyAllowedFields(['name', 'email', 'role', 'photoURL', 'badges', 'completedLevels', 'levelStars', 'redDestroyed']) &&
+      allow read: if isAuthenticated(); // Allow reading for leaderboard
+      allow create, update: if isOwner(userId) && hasOnlyAllowedFields(['name', 'email', 'role', 'photoURL', 'badges', 'completedLevels', 'levelStars', 'redDestroyed', 'highestScore']) &&
                              request.resource.data.role == (resource == null ? 'client' : resource.data.role);
       allow delete: if isAdmin();
+    }
+
+    match /levels/{levelId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidLevel(request.resource.data);
+      allow update: if isAuthenticated() && isValidLevelUpdate(request.resource.data, resource.data);
+      allow delete: if isAdmin() || isOwner(resource.data.creatorId);
     }
   }
 }

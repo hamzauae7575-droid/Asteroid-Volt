@@ -5,16 +5,18 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play, Bomb, RefreshCw, Trophy, Clock, Infinity, LogIn, LogOut, User, Send, HelpCircle, Award, Star, Shield, Target, Flame, Crown, Medal, Sparkles, Info } from 'lucide-react';
+import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play, Bomb, RefreshCw, Trophy, Clock, Infinity, LogIn, LogOut, User, Send, HelpCircle, Award, Star, Shield, Target, Flame, Crown, Medal, Sparkles, Info, X, Lock, Users, PenTool, Globe, Music } from 'lucide-react';
+import { GoogleGenAI } from "@google/genai";
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp, Timestamp, doc, setDoc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp, Timestamp, doc, setDoc, getDoc, updateDoc, arrayUnion, increment } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 interface LeaderboardEntry {
   id: string;
@@ -53,7 +55,26 @@ const BADGES: Badge[] = [
   { id: 'creator_master', name: 'Creator Master', description: 'Destroy 100 red asteroids', icon: <Sparkles className="w-6 h-6" />, color: 'text-red-500' },
   { id: 'volume_max', name: 'Max Volume', description: 'Reach 100% volume', icon: <Volume2 className="w-6 h-6" />, color: 'text-green-500' },
   { id: 'bomb_dodger', name: 'Bomb Dodger', description: 'Complete a level without hitting bombs', icon: <Bomb className="w-6 h-6" />, color: 'text-gray-400' },
+  { id: 'community_player', name: 'Community Player', description: 'Beat a community level', icon: <Globe className="w-6 h-6" />, color: 'text-blue-400' },
+  { id: 'level_creator', name: 'Level Creator', description: 'Create and publish a custom level', icon: <PenTool className="w-6 h-6" />, color: 'text-pink-400' },
+  { id: 'signed_in', name: 'Welcome Aboard', description: 'Sign in to your account', icon: <LogIn className="w-6 h-6" />, color: 'text-green-400' },
+  { id: 'username_changed', name: 'Identity Crisis', description: 'Change your username', icon: <User className="w-6 h-6" />, color: 'text-purple-400' },
+  { id: 'mystery_badge', name: 'Mystery Guest', description: 'Discover the secret', icon: <HelpCircle className="w-6 h-6" />, color: 'text-yellow-400' },
 ];
+
+interface CustomLevel {
+  id?: string;
+  name: string;
+  creatorId: string;
+  creatorName: string;
+  rubyCount: number;
+  emeraldCount: number;
+  starCount: number;
+  timeLimit: number;
+  songUrl: string;
+  plays?: number;
+  createdAt?: number;
+}
 
 interface Asteroid {
   id: number;
@@ -88,30 +109,73 @@ const GAME_HEIGHT = 800;
 const MAX_VOLUME = 100;
 
 // Memoized HUD Components for performance
-const VolumeHUD = React.memo(({ volume, mode, volumeFlash }: { volume: number, mode: 'destroyer' | 'creator', volumeFlash: 'hit' | 'miss' | null }) => {
+const HeaderHUD = React.memo(({ volumeRef, mode, volumeFlash, destroyedAsteroidsRef, totalAsteroidsRef, gameMode }: { volumeRef: React.MutableRefObject<number>, mode: 'destroyer' | 'creator', volumeFlash: 'hit' | 'miss' | null, destroyedAsteroidsRef: React.MutableRefObject<number>, totalAsteroidsRef: React.MutableRefObject<number>, gameMode: string }) => {
+  const [volume, setVolume] = useState(volumeRef.current);
+  const [destroyed, setDestroyed] = useState(destroyedAsteroidsRef.current);
+  const [total, setTotal] = useState(totalAsteroidsRef.current);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setVolume(volumeRef.current);
+      setDestroyed(destroyedAsteroidsRef.current);
+      setTotal(totalAsteroidsRef.current);
+    }, 100);
+    return () => clearInterval(interval);
+  }, [volumeRef, destroyedAsteroidsRef, totalAsteroidsRef]);
+
+  const progress = total > 0 ? (destroyed / total) * 100 : 0;
+
   return (
-    <div className={`fixed bottom-4 left-4 right-4 md:left-auto md:right-8 md:bottom-8 md:w-96 bg-neutral-900/90 backdrop-blur-xl p-4 md:p-8 rounded-3xl border-2 transition-all duration-500 shadow-2xl z-40 ${
+    <div className={`flex items-center gap-4 bg-neutral-900/90 backdrop-blur-xl px-4 py-2 rounded-xl border-2 transition-all duration-500 shadow-lg ${
       mode === 'destroyer' ? 'border-green-500/20' : 'border-red-500/20'
     } ${volumeFlash === 'hit' ? 'scale-105 border-green-500' : volumeFlash === 'miss' ? 'scale-95 border-red-500' : ''}`}>
-      <div className="flex items-center justify-between mb-2 md:mb-4">
-        <div className="flex items-center gap-2 md:gap-3">
-          <div className={`p-1.5 md:p-2 rounded-xl ${mode === 'destroyer' ? 'bg-green-500 text-black' : 'bg-red-500 text-black'}`}>
-            {volume <= 0 ? <VolumeX className="w-4 h-4 md:w-6 md:h-6" /> : volume < 30 ? <Volume1 className="w-4 h-4 md:w-6 md:h-6" /> : <Volume2 className="w-4 h-4 md:w-6 md:h-6" />}
+      
+      {/* Volume Bar */}
+      <div className="flex items-center gap-2">
+        <div className={`p-1 rounded-lg ${mode === 'destroyer' ? 'bg-green-500 text-black' : 'bg-red-500 text-black'}`}>
+          {volume <= 0 ? <VolumeX className="w-3 h-3 md:w-4 md:h-4" /> : volume < 30 ? <Volume1 className="w-3 h-3 md:w-4 md:h-4" /> : <Volume2 className="w-3 h-3 md:w-4 md:h-4" />}
+        </div>
+        <div className="flex flex-col w-20 md:w-24">
+          <div className="flex justify-between items-center mb-1">
+            <span className="font-black text-[8px] md:text-[10px] tracking-widest uppercase opacity-50">Volume</span>
+            <span className="font-black text-xs md:text-sm italic tracking-tighter">
+              {Math.round(volume)}<span className="text-[8px] not-italic ml-0.5 opacity-50">%</span>
+            </span>
           </div>
-          <div className="font-black text-xs md:text-sm tracking-widest uppercase opacity-50">Volume</div>
-        </div>
-        <div className="w-16 md:w-24 text-right font-black text-xl md:text-4xl italic tracking-tighter">
-          {Math.round(volume)}<span className="text-[10px] md:text-sm not-italic ml-0.5 md:ml-1 opacity-50">%</span>
-        </div>
-      </div>
-      <div className="h-4 md:h-6 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
-        <div 
-          className={`h-full relative transition-all duration-200 ${mode === 'destroyer' ? 'bg-green-500' : 'bg-red-500'}`}
-          style={{ width: `${volume}%` }}
-        >
-          <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-white/20" />
+          <div className="h-1.5 md:h-2 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
+            <div 
+              className={`h-full relative transition-all duration-200 ${mode === 'destroyer' ? 'bg-green-500' : 'bg-red-500'}`}
+              style={{ width: `${volume}%` }}
+            />
+          </div>
         </div>
       </div>
+
+      {/* Mission Progression Bar (Only in Level/Custom Mode) */}
+      {(gameMode === 'level' || gameMode === 'custom') && (
+        <>
+          <div className="w-px h-6 bg-white/10" />
+          <div className="flex items-center gap-2">
+            <div className={`p-1 rounded-lg bg-cyan-500 text-black`}>
+              <Target className="w-3 h-3 md:w-4 md:h-4" />
+            </div>
+            <div className="flex flex-col w-20 md:w-24">
+              <div className="flex justify-between items-center mb-1">
+                <span className="font-black text-[8px] md:text-[10px] tracking-widest uppercase opacity-50 text-cyan-500">Mission</span>
+                <span className="font-black text-xs md:text-sm italic tracking-tighter text-cyan-500">
+                  {Math.round(progress)}<span className="text-[8px] not-italic ml-0.5 opacity-50">%</span>
+                </span>
+              </div>
+              <div className="h-1.5 md:h-2 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
+                <div 
+                  className={`h-full relative transition-all duration-200 bg-cyan-500`}
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 });
@@ -140,7 +204,7 @@ const GameHUD = React.memo(({
   tutorialGreenRef: React.MutableRefObject<number>,
   tutorialRedRef: React.MutableRefObject<number>,
   mode: 'destroyer' | 'creator',
-  gameMode: 'infinite' | 'level' | 'tutorial',
+  gameMode: 'infinite' | 'level' | 'tutorial' | 'custom',
   levelTime: number,
   tutorialStep: number,
   volumeFlash: 'hit' | 'miss' | null,
@@ -172,8 +236,10 @@ const GameHUD = React.memo(({
 
   return (
     <>
-      {gameMode === 'level' && (
-        <StarHUD totalAsteroids={total} destroyedAsteroids={destroyed} />
+      {(gameMode === 'level' || gameMode === 'custom') && (
+        <div className="absolute top-20 right-4 md:top-24 md:right-8 z-40 pointer-events-none">
+          <StarHUD totalAsteroids={total} destroyedAsteroids={destroyed} />
+        </div>
       )}
       
       {gameMode === 'tutorial' && (
@@ -242,8 +308,6 @@ const GameHUD = React.memo(({
           </motion.div>
         </div>
       )}
-
-      <VolumeHUD volume={volume} mode={mode} volumeFlash={volumeFlash} />
     </>
   );
 });
@@ -305,9 +369,50 @@ export default function App() {
   const isGameOverRef = useRef(isGameOver);
   useEffect(() => { isGameOverRef.current = isGameOver; }, [isGameOver]);
   const [mode, setMode] = useState<'destroyer' | 'creator'>('destroyer');
-  const [gameMode, setGameMode] = useState<'infinite' | 'level' | 'tutorial'>('infinite');
+  const [gameMode, setGameMode] = useState<'infinite' | 'level' | 'tutorial' | 'custom'>('infinite');
   const gameModeRef = useRef(gameMode);
+  const [customLevelData, setCustomLevelData] = useState<CustomLevel | null>(null);
+  const [zapClicks, setZapClicks] = useState(0);
+  const [showCommunity, setShowCommunity] = useState(false);
+  const [showLevelEditor, setShowLevelEditor] = useState(false);
+  const [communityLevels, setCommunityLevels] = useState<CustomLevel[]>([]);
+  const [customLevelDraft, setCustomLevelDraft] = useState<Partial<CustomLevel>>({
+    name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: ''
+  });
+  const customSpawnPoolRef = useRef<('ruby' | 'emerald' | 'star')[]>([]);
+  const [unlockedLevels, setUnlockedLevels] = useState<number>(20);
+  const [highScore, setHighScore] = useState(0);
+  const highScoreRef = useRef(highScore);
+  useEffect(() => { highScoreRef.current = highScore; }, [highScore]);
   useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
+  
+  const [musicEnabled, setMusicEnabled] = useState(true);
+  const [sfxEnabled, setSfxEnabled] = useState(true);
+  
+  useEffect(() => {
+    const handleMenuNav = (e: KeyboardEvent) => {
+      if (!(!gameStarted || isGameOver || isPaused)) return;
+      
+      const buttons = Array.from(document.querySelectorAll('.menu-btn:not([disabled])')) as HTMLButtonElement[];
+      if (buttons.length === 0) return;
+      
+      const currentIndex = buttons.findIndex(b => document.activeElement === b);
+      
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % buttons.length : 0;
+        buttons[nextIndex].focus();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const nextIndex = currentIndex >= 0 ? (currentIndex - 1 + buttons.length) % buttons.length : buttons.length - 1;
+        buttons[nextIndex].focus();
+      }
+    };
+    
+    window.addEventListener('keydown', handleMenuNav);
+    return () => window.removeEventListener('keydown', handleMenuNav);
+  }, [gameStarted, isGameOver, isPaused]);
+  
   const aimerRef = useRef<HTMLDivElement>(null);
   const [volumeFlash, setVolumeFlash] = useState<'hit' | 'miss' | null>(null);
   const [levelTime, setLevelTime] = useState(60);
@@ -321,10 +426,14 @@ export default function App() {
   useEffect(() => { redDestroyedRef.current = redDestroyed; }, [redDestroyed]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showLevelSelector, setShowLevelSelector] = useState(false);
   const [showBadges, setShowBadges] = useState(false);
-  const [showTutorialPrompt, setShowTutorialPrompt] = useState(false);
+  const [selectedLevel, setSelectedLevel] = useState(1);
   const [isStartingFromMenu, setIsStartingFromMenu] = useState(false);
   const [isLevelMenuOpen, setIsLevelMenuOpen] = useState(false);
+  const [quality, setQuality] = useState<'high' | 'low'>('high');
+  const qualityRef = useRef(quality);
+  useEffect(() => { qualityRef.current = quality; }, [quality]);
   const levelMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [tutorialStep, setTutorialStep] = useState(0);
@@ -371,7 +480,9 @@ export default function App() {
           const data = userDoc.data();
           setPlayerName(data.name || u.displayName || '');
           setUserBadges(data.badges || []);
-          setCompletedLevels(data.completedLevels || []);
+          const completed = data.completedLevels || [];
+          setCompletedLevels(completed);
+          setUnlockedLevels(20);
           setLevelStars(data.levelStars || {});
           setRedDestroyed(data.redDestroyed || 0);
         } else {
@@ -384,19 +495,39 @@ export default function App() {
             badges: [],
             completedLevels: [],
             levelStars: {},
-            redDestroyed: 0
+            redDestroyed: 0,
+            highestScore: 0
           });
         }
       } else {
         setPlayerName('');
         setUserBadges([]);
         setCompletedLevels([]);
+        setUnlockedLevels(20);
         setLevelStars({});
         setRedDestroyed(0);
       }
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setCommunityLevels([]);
+      return;
+    }
+    const q = query(collection(db, 'levels'), orderBy('createdAt', 'desc'), limit(50));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const levels: CustomLevel[] = [];
+      snapshot.forEach((doc) => {
+        levels.push({ id: doc.id, ...doc.data() } as CustomLevel);
+      });
+      setCommunityLevels(levels);
+    }, (error) => {
+      console.error("Failed to fetch community levels:", error);
+    });
+    return () => unsubscribe();
+  }, [user]);
 
   const awardBadge = async (badgeId: string) => {
     if (userBadges.includes(badgeId)) return;
@@ -431,6 +562,7 @@ export default function App() {
 
     const nextLevels = [...new Set([...completedLevels, level])];
     setCompletedLevels(nextLevels);
+    // setUnlockedLevels(Math.max(unlockedLevels, level + 1));
     awardBadge(`level_${level}`);
     
     if (user) {
@@ -452,9 +584,17 @@ export default function App() {
       setLeaderboard([]);
       return;
     }
-    const q = query(collection(db, 'leaderboard'), orderBy('score', 'desc'), limit(10));
+    const q = query(collection(db, 'users'), orderBy('highestScore', 'desc'), limit(10));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const entries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LeaderboardEntry));
+      const entries = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.name || 'Anonymous',
+          score: data.highestScore || 0,
+          uid: doc.id
+        } as LeaderboardEntry;
+      });
       setLeaderboard(entries);
     }, (error) => {
       console.error("Leaderboard listener error:", error);
@@ -465,7 +605,12 @@ export default function App() {
   const handleLogin = async () => {
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      if (result.user && !userBadges.includes('signed_in')) {
+        await updateDoc(doc(db, 'users', result.user.uid), {
+          badges: arrayUnion('signed_in')
+        });
+      }
     } catch (error) {
       console.error("Login failed", error);
     }
@@ -478,19 +623,22 @@ export default function App() {
     setIsSubmitting(true);
     try {
       const nameToSave = playerName.trim();
-      await addDoc(collection(db, 'leaderboard'), {
-        name: nameToSave,
-        score: timerRef.current,
-        timestamp: serverTimestamp(),
-        uid: user.uid
-      });
+      const userRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userRef);
       
-      // Also update the user's profile with their chosen name
-      await updateDoc(doc(db, 'users', user.uid), {
-        name: nameToSave
-      });
-      
-      setShowLeaderboard(true);
+      if (userDoc.exists()) {
+        const currentScore = userDoc.data().highestScore || 0;
+        if (timerRef.current > currentScore) {
+          await updateDoc(userRef, {
+            highestScore: timerRef.current,
+            name: nameToSave
+          });
+        } else {
+          await updateDoc(userRef, {
+            name: nameToSave
+          });
+        }
+      }
     } catch (error) {
       console.error("Failed to submit score", error);
     } finally {
@@ -505,10 +653,115 @@ export default function App() {
   
   const gameRef = useRef<HTMLDivElement>(null);
 
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const musicIntervalRef = useRef<number | null>(null);
+
+  const startSynthMusic = useCallback(() => {
+    if (!musicEnabled) return;
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const notes = [220, 277.18, 329.63, 440, 329.63, 277.18];
+      let step = 0;
+
+      if (musicIntervalRef.current) clearInterval(musicIntervalRef.current);
+      musicIntervalRef.current = window.setInterval(() => {
+        if (!musicEnabled || isPausedRef.current || isGameOverRef.current) return;
+        
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.type = modeRef.current === 'destroyer' ? 'square' : 'sawtooth';
+        osc.frequency.value = notes[step % notes.length] * (gameModeRef.current === 'tutorial' ? 1.5 : 1);
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        gain.gain.setValueAtTime(0.05 * (volumeRef.current / 100), ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+        
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.2);
+        
+        step++;
+      }, 200);
+    } catch (e) {
+      console.error("Synth music failed", e);
+    }
+  }, [musicEnabled]);
+
+  const stopSynthMusic = useCallback(() => {
+    if (musicIntervalRef.current) {
+      clearInterval(musicIntervalRef.current);
+      musicIntervalRef.current = null;
+    }
+  }, []);
+
+  const playSFX = useCallback((type: 'shoot' | 'explosion' | 'hit' | 'miss') => {
+    if (!sfxEnabled) return;
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+      
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      const now = ctx.currentTime;
+      if (type === 'shoot') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(880, now);
+        osc.frequency.exponentialRampToValueAtTime(110, now + 0.1);
+        gain.gain.setValueAtTime(0.05, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+      } else if (type === 'explosion') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(100, now);
+        osc.frequency.exponentialRampToValueAtTime(10, now + 0.3);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+      } else if (type === 'hit') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1200, now);
+        osc.frequency.exponentialRampToValueAtTime(1600, now + 0.1);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+      } else if (type === 'miss') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.exponentialRampToValueAtTime(50, now + 0.2);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+      }
+    } catch (e) {
+      console.error("SFX failed", e);
+    }
+  }, [sfxEnabled]);
+
   const getSongUrl = useCallback(() => {
     if (!gameStarted) return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
     if (gameMode === 'tutorial') return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3';
     if (gameMode === 'infinite') return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3';
+    
+    if (gameMode === 'custom' && customLevelData?.songUrl) {
+      return customLevelData.songUrl;
+    }
     
     const levelSongs: Record<number, string> = {
       1: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
@@ -534,26 +787,50 @@ export default function App() {
     const url = getSongUrl();
     
     if (!audioRef.current) {
-      const audio = new Audio(url);
+      const audio = new Audio();
       audio.loop = true;
-      audio.volume = volumeRef.current / 100;
+      audio.volume = musicEnabled ? volumeRef.current / 100 : 0;
+      
+      audio.onerror = () => {
+        console.log("Audio failed to load, falling back to synth");
+        startSynthMusic();
+      };
+      
+      audio.src = url;
       audioRef.current = audio;
       
       const playOnInteract = () => {
-        audio.play().catch(() => {});
+        if (musicEnabled) {
+          audio.play().catch(() => startSynthMusic());
+        }
         window.removeEventListener('click', playOnInteract);
       };
       window.addEventListener('click', playOnInteract);
     } else {
       if (audioRef.current.src !== url) {
-        audioRef.current.src = url;
+        try {
+          audioRef.current.src = url;
+          audioRef.current.load();
+        } catch (e) {
+          console.error("Failed to set audio source:", e);
+          audioRef.current.src = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+        }
       }
+      audioRef.current.volume = musicEnabled ? volumeRef.current / 100 : 0;
       audioRef.current.currentTime = 0;
-      if (gameStarted || gameId > 0) {
-        audioRef.current.play().catch(e => console.error("Audio play failed", e));
+      if ((gameStarted || gameId > 0) && musicEnabled && !isPaused && !isGameOver) {
+        audioRef.current.play().catch((e) => {
+          console.error("Audio play failed:", e);
+          startSynthMusic();
+        });
+      } else {
+        audioRef.current.pause();
+        stopSynthMusic();
       }
     }
-  }, [getSongUrl, gameId]);
+    
+    return () => stopSynthMusic();
+  }, [getSongUrl, gameId, musicEnabled, isPaused, isGameOver, startSynthMusic, stopSynthMusic]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -616,6 +893,11 @@ export default function App() {
         isBomb = false;
         isNegative = true;
       }
+    } else if (gameModeRef.current === 'custom') {
+      if (customSpawnPoolRef.current.length === 0) return undefined;
+      const type = customSpawnPoolRef.current.pop()!;
+      isBomb = type === 'star';
+      isNegative = type === 'ruby';
     } else {
       const baseBombChance = 0.08;
       const baseNegativeChance = 0.2;
@@ -661,16 +943,20 @@ export default function App() {
   }, [currentLevel]);
 
   const createParticles = (x: number, y: number, color: string, count: number = 1) => {
+    // Quality adjustment
+    const adjustedCount = qualityRef.current === 'low' ? Math.max(1, Math.floor(count / 2)) : count;
+    const maxParticles = qualityRef.current === 'low' ? 20 : 40;
+
     // Performance: Limit total particles
-    if (particlesRef.current.length > 40) {
-      particlesRef.current = particlesRef.current.slice(-40);
+    if (particlesRef.current.length > maxParticles) {
+      particlesRef.current = particlesRef.current.slice(-maxParticles);
     }
     
     const r = parseInt(color.slice(1, 3), 16);
     const g = parseInt(color.slice(3, 5), 16);
     const b = parseInt(color.slice(5, 7), 16);
 
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < adjustedCount; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 0.5 + Math.random() * 1.5;
       particlesRef.current.push({
@@ -839,7 +1125,12 @@ export default function App() {
     const baseInterval = gameModeRef.current === 'tutorial' ? 2000 : 1200;
     const levelInterval = gameModeRef.current === 'level' ? Math.max(500, baseInterval - (currentLevel - 1) * 80) : baseInterval;
     const infiniteInterval = gameModeRef.current === 'infinite' ? Math.max(400, baseInterval - (difficultyRef.current - 1) * 100) : baseInterval;
-    const spawnInterval = Math.min(levelInterval, infiniteInterval);
+    let spawnInterval = Math.min(levelInterval, infiniteInterval);
+    
+    // Quality adjustment: slower spawning for low quality
+    if (qualityRef.current === 'low') {
+      spawnInterval *= 1.5;
+    }
     
     if (time - lastSpawnRef.current > spawnInterval) {
       if (asteroidsRef.current.length < 25) {
@@ -863,6 +1154,7 @@ export default function App() {
     // Level mode completion
     if (gameModeRef.current === 'level' && timerRef.current >= levelTime) {
       setIsGameOver(true);
+      isGameOverRef.current = true;
       completeLevel(currentLevel);
       if (audioRef.current) audioRef.current.pause();
     }
@@ -937,6 +1229,10 @@ export default function App() {
       audioRef.current.volume = volumeRef.current / 100;
       if (volumeRef.current <= 0 && gameStarted && !isGameOver && gameModeRef.current !== 'tutorial') {
         setIsGameOver(true);
+        isGameOverRef.current = true;
+        if (gameModeRef.current === 'infinite' && user && playerName.trim()) {
+          submitScore();
+        }
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
       }
@@ -999,6 +1295,8 @@ export default function App() {
     const x = (clientX - drawLeft) * (GAME_WIDTH / drawWidth);
     const y = (clientY - drawTop) * (GAME_HEIGHT / drawHeight);
 
+    playSFX('shoot');
+
     let hit = false;
     let hitBomb = false;
     let hitWrongColor = false;
@@ -1013,6 +1311,7 @@ export default function App() {
         if (ast.isBomb) {
           hit = true;
           hitBomb = true;
+          playSFX('explosion');
           explosionsRef.current.push({ id: Math.random(), x: ast.x, y: ast.y, life: 1 });
           createParticles(ast.x, ast.y, '#ffffff', 10);
           return false;
@@ -1035,12 +1334,14 @@ export default function App() {
             redDestroyedRef.current += 1;
             if (redDestroyedRef.current >= 100) awardBadge('creator_master');
           }
+          playSFX('explosion');
           explosionsRef.current.push({ id: Math.random(), x: ast.x, y: ast.y, life: 1 });
           createParticles(ast.x, ast.y, ast.isNegative ? '#ef4444' : '#22c55e', 8);
           return false;
         } else {
           hitWrongColor = true;
           volumeRef.current = Math.max(0, volumeRef.current - 5);
+          playSFX('explosion');
           explosionsRef.current.push({ id: Math.random(), x: ast.x, y: ast.y, life: 1 });
           createParticles(ast.x, ast.y, '#ffffff', 5);
           return false; // Destroy asteroid
@@ -1055,61 +1356,60 @@ export default function App() {
         if (gameModeRef.current === 'tutorial') {
           volumeRef.current = Math.max(5, volumeRef.current - 15);
           timerRef.current = Math.max(0, timerRef.current - 3);
+          playSFX('miss');
           triggerFlash('miss');
         } else {
           volumeRef.current = 0;
           setIsGameOver(true);
           isGameOverRef.current = true;
+          if (gameModeRef.current === 'infinite' && user && playerName.trim()) {
+            submitScore();
+          }
           if (audioRef.current) audioRef.current.pause();
+          playSFX('miss');
           triggerFlash('miss');
         }
       } else {
         const gain = modeRef.current === 'creator' ? 10 : 8;
         volumeRef.current = Math.min(MAX_VOLUME, volumeRef.current + gain);
         if (volumeRef.current >= 100) awardBadge('volume_max');
+        playSFX('hit');
         triggerFlash('hit');
       }
     } else {
       // Miss or wrong color
       const penalty = hitWrongColor ? 15 : 10;
       volumeRef.current = Math.max(0, volumeRef.current - penalty);
+      playSFX('miss');
       triggerFlash('miss');
     }
-  }, [createParticles, awardBadge]);
+  }, [createParticles, awardBadge, playSFX]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent | React.TouchEvent) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect || !aimerRef.current) return;
+    if (!aimerRef.current) return;
     
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-    
-    aimerRef.current.style.left = `${x}px`;
-    aimerRef.current.style.top = `${y}px`;
+    aimerRef.current.style.left = `${clientX}px`;
+    aimerRef.current.style.top = `${clientY}px`;
   }, []);
 
-  const startGame = (isTutorial = false) => {
-    console.log('startGame called:', { isTutorial, gameMode, tutorialStep });
+  const startGame = () => {
+    console.log('startGame called:', { gameMode });
     setGameId(prev => prev + 1);
     setGameStarted(true);
     setIsPaused(false);
     isPausedRef.current = false;
     setIsGameOver(false);
     isGameOverRef.current = false;
-    setIsTutorialPaused(isTutorial);
-    isTutorialPausedRef.current = isTutorial;
-    if (isTutorial) {
-      setGameMode('tutorial');
-      setTutorialStep(1);
-      tutorialStepRef.current = 1;
-    } else {
-      if (gameMode === 'tutorial') setGameMode('infinite');
-      setTutorialStep(4);
-      tutorialStepRef.current = 4;
-    }
+    setIsTutorialPaused(false);
+    isTutorialPausedRef.current = false;
+    
+    if (gameMode === 'tutorial' as any) setGameMode('infinite');
+    setTutorialStep(4);
+    tutorialStepRef.current = 4;
+    
     volumeRef.current = 20;
     timerRef.current = 0;
     difficultyRef.current = 1;
@@ -1122,19 +1422,22 @@ export default function App() {
     particlesRef.current = [];
     explosionsRef.current = [];
 
+    if (gameMode === 'custom' && customLevelData) {
+      const pool: ('ruby' | 'emerald' | 'star')[] = [];
+      for (let i=0; i<customLevelData.rubyCount; i++) pool.push('ruby');
+      for (let i=0; i<customLevelData.emeraldCount; i++) pool.push('emerald');
+      for (let i=0; i<customLevelData.starCount; i++) pool.push('star');
+      pool.sort(() => Math.random() - 0.5);
+      customSpawnPoolRef.current = pool;
+      timerRef.current = customLevelData.timeLimit;
+    }
+    gameModeRef.current = gameMode;
+
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
   };
 
-  const startTutorial = () => {
-    setGameMode('tutorial');
-    setShowTutorialPrompt(false);
-    setTutorialStep(1);
-    startGame(true);
-  };
-
   const skipTutorial = () => {
-    setShowTutorialPrompt(false);
-    if (gameMode === 'tutorial') {
+    if (gameMode === 'tutorial' as any) {
       setGameMode('infinite');
     }
     if (isStartingFromMenu) {
@@ -1150,7 +1453,15 @@ export default function App() {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = window.setInterval(() => {
         if (!isPausedRef.current && !isTutorialPausedRef.current && !isGameOverRef.current) {
-          timerRef.current += 1;
+          if (gameModeRef.current === 'custom') {
+            timerRef.current -= 1;
+            if (timerRef.current <= 0) {
+              setIsGameOver(true);
+              isGameOverRef.current = true;
+            }
+          } else {
+            timerRef.current += 1;
+          }
         }
       }, 1000);
     }
@@ -1166,14 +1477,24 @@ export default function App() {
   };
 
   return (
-    <div className={`fixed inset-0 flex flex-col items-center justify-between p-4 font-mono transition-colors duration-500 overflow-hidden ${
-      mode === 'destroyer' ? 'bg-neutral-950 text-green-500' : 'bg-neutral-900 text-red-500'
-    }`}>
+    <div 
+      className={`min-h-screen flex flex-col items-center justify-between p-4 font-mono transition-colors duration-500 overflow-hidden select-none ${
+        mode === 'destroyer' ? 'bg-neutral-950 text-green-500' : 'bg-neutral-900 text-red-500'
+      } ${gameStarted ? 'md:cursor-none' : ''}`}
+      onMouseMove={handleMouseMove}
+      onTouchMove={handleMouseMove}
+    >
       {/* Header */}
       <div className="w-full flex justify-between items-center px-2 md:px-4 pt-2">
         <div className="flex flex-col">
           <h1 className="text-lg md:text-2xl font-black tracking-tighter flex items-center gap-1 md:gap-2">
-            <Zap className={`w-4 h-4 md:w-6 md:h-6 ${mode === 'destroyer' ? 'fill-green-500' : 'fill-red-500'}`} />
+            <button onClick={() => {
+              const newClicks = zapClicks + 1;
+              setZapClicks(newClicks);
+              if (newClicks === 50) awardBadge('mystery_badge');
+            }}>
+              <Zap className={`w-4 h-4 md:w-6 md:h-6 ${mode === 'destroyer' ? 'fill-green-500' : 'fill-red-500'}`} />
+            </button>
             <span className="hidden sm:inline">{mode === 'destroyer' ? 'Emerald Laser' : 'Ruby Laser'}</span>
             <span className="sm:hidden">{mode === 'destroyer' ? 'EMERALD' : 'RUBY'}</span>
           </h1>
@@ -1184,164 +1505,42 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex gap-1 md:gap-2 items-center">
-          {/* Badges Button */}
+        <div className="flex gap-2 items-center">
+          {/* Top Bar Icons */}
           <button 
             onClick={() => setShowBadges(true)}
-            className="p-1.5 md:p-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-all border border-white/10"
+            className="p-2 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
             title="Badges"
           >
-            <Award className="w-3 h-3 md:w-4 md:h-4 text-yellow-500" />
+            <Award className="w-5 h-5 text-yellow-500" />
           </button>
-
-          {/* Help Button */}
-          <button 
-            onClick={() => {
-              setIsStartingFromMenu(false);
-              setShowTutorialPrompt(true);
-            }}
-            className="p-1.5 md:p-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-all border border-white/10"
-            title="Help"
-          >
-            <HelpCircle className="w-3 h-3 md:w-4 md:h-4 text-cyan-400" />
-          </button>
-
-          {/* Game Mode Toggle */}
+          
           {!gameStarted && (
-            <div className="flex bg-neutral-800 rounded-lg p-0.5 md:p-1 mr-1 md:mr-4">
-              <button 
-                onClick={() => setGameMode('infinite')}
-                className={`px-2 md:px-3 py-1 rounded-md flex items-center gap-1 md:gap-2 text-[8px] md:text-[10px] font-bold transition-all ${
-                  gameMode === 'infinite' ? 'bg-neutral-700 text-white shadow-inner' : 'text-white/40 hover:text-white/60'
-                }`}
-              >
-                <Infinity className="w-2 h-2 md:w-3 md:h-3" /> <span className="hidden xs:inline">INFINITE</span>
-              </button>
-              <div 
-                className="relative"
-                onMouseEnter={() => {
-                  if (levelMenuTimeoutRef.current) clearTimeout(levelMenuTimeoutRef.current);
-                  setIsLevelMenuOpen(true);
-                }}
-                onMouseLeave={() => {
-                  levelMenuTimeoutRef.current = setTimeout(() => {
-                    setIsLevelMenuOpen(false);
-                  }, 1000);
-                }}
-              >
-                <button 
-                  onClick={() => setGameMode('level')}
-                  className={`px-2 md:px-3 py-1 rounded-md flex items-center gap-1 md:gap-2 text-[8px] md:text-[10px] font-bold transition-all ${
-                    gameMode === 'level' ? 'bg-neutral-700 text-white shadow-inner' : 'text-white/40 hover:text-white/60'
-                  }`}
-                >
-                  <Trophy className="w-2 h-2 md:w-3 md:h-3" /> <span className="hidden xs:inline">LEVEL</span> {currentLevel}
-                </button>
-                {/* Level Selector Dropdown */}
-                {!gameStarted && (
-                  <div className={`absolute top-full right-0 md:left-0 mt-2 ${isLevelMenuOpen ? 'grid' : 'hidden'} grid-cols-5 gap-1 bg-neutral-900 p-2 rounded-xl border border-white/10 z-50 w-40 md:w-48 shadow-2xl`}>
-                    {[...Array(10)].map((_, i) => {
-                      const levelNum = i + 1;
-                      const isUnlocked = levelNum === 1 || completedLevels.includes(i);
-                      const isCompleted = completedLevels.includes(levelNum);
-                      
-                      return (
-                        <button
-                          key={i}
-                          disabled={!isUnlocked}
-                          onClick={() => {
-                            setCurrentLevel(levelNum);
-                            setGameMode('level');
-                          }}
-                          className={`w-7 h-7 md:w-10 md:h-10 rounded-lg flex flex-col items-center justify-center text-[8px] md:text-[10px] font-bold transition-all relative ${
-                            currentLevel === levelNum ? 'bg-green-500 text-black' : 
-                            isCompleted ? 'bg-green-900/40 text-green-400 border border-green-500/20' :
-                            isUnlocked ? 'bg-neutral-800 text-white hover:bg-neutral-700' :
-                            'bg-neutral-950 text-white/10 cursor-not-allowed'
-                          }`}
-                          title={isUnlocked ? `Level ${levelNum}` : 'Locked: Complete previous level'}
-                        >
-                          {isUnlocked ? levelNum : '🔒'}
-                          {isCompleted && levelStars[levelNum] > 0 && (
-                            <div className="flex gap-0.5 mt-0.5">
-                              {[...Array(levelStars[levelNum])].map((_, s) => (
-                                <Star key={s} className="w-1 md:w-1.5 h-1 md:h-1.5 fill-current" />
-                              ))}
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
+            <button 
+              onClick={() => {
+                setGameMode('tutorial');
+                startGame();
+              }}
+              className="p-2 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+              title="Training / Tutorial"
+            >
+              <Info className="w-5 h-5 text-cyan-500" />
+            </button>
           )}
 
-          {/* Auth Button */}
-          {user && !gameStarted && (
-            <div className="hidden sm:flex items-center gap-2 bg-neutral-800 px-2 py-1 rounded-lg border border-white/10">
-              <User className="w-3 h-3 text-white/40" />
-              <input 
-                type="text" 
-                value={playerName}
-                onChange={(e) => setPlayerName(e.target.value)}
-                onBlur={async () => {
-                  if (playerName.trim() && user) {
-                    try {
-                      await updateDoc(doc(db, 'users', user.uid), {
-                        name: playerName.trim()
-                      });
-                    } catch (error) {
-                      console.error("Failed to update username", error);
-                    }
-                  }
-                }}
-                placeholder="Username"
-                className="bg-transparent border-none outline-none text-white text-[10px] font-bold w-16 md:w-20"
-                maxLength={20}
-              />
-            </div>
-          )}
           <button 
             onClick={user ? handleLogout : handleLogin}
-            className={`flex items-center gap-1 md:gap-2 px-2 md:px-3 py-1 border-2 text-[8px] md:text-[10px] font-bold transition-all rounded-lg ${
-              user ? 'border-white/20 text-white/60 hover:text-white hover:border-white/40' : 'bg-white text-black border-white hover:bg-white/90'
-            }`}
+            className="p-2 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+            title={user ? "Sign Out" : "Sign In"}
           >
-            {user ? <LogOut className="w-2 h-2 md:w-3 md:h-3" /> : <LogIn className="w-2 h-2 md:w-3 md:h-3" />}
-            <span className="hidden xs:inline">{user ? 'LOGOUT' : 'LOGIN'}</span>
+            {user ? <LogOut className="w-5 h-5 text-red-500" /> : <LogIn className="w-5 h-5 text-emerald-500" />}
           </button>
 
-          <div className="hidden xs:block w-px h-6 bg-white/10 mx-1 md:mx-2" />
-
-          <div className="hidden md:flex gap-2">
-            <button 
-              onClick={() => setMode('destroyer')}
-              className={`px-3 py-1 border-2 text-[10px] font-bold transition-all flex items-center gap-2 ${
-                mode === 'destroyer' ? 'bg-green-500 text-black border-green-500' : 'border-green-500/30 text-green-500/50'
-              }`}
-            >
-              <span className="opacity-50">[1]</span> EVOLT
-            </button>
-            <button 
-              onClick={() => setMode('creator')}
-              className={`px-3 py-1 border-2 text-[10px] font-bold transition-all flex items-center gap-2 ${
-                mode === 'creator' ? 'bg-red-500 text-black border-red-500' : 'border-red-500/30 text-red-500/50'
-              }`}
-            >
-              <span className="opacity-50">[2]</span> RVOLT
-            </button>
-          </div>
-          {gameStarted && !isGameOver && (
-            <button 
-              onClick={togglePause}
-              className={`p-1 border-2 rounded-full transition-all ${
-                mode === 'destroyer' ? 'border-green-500 text-green-500' : 'border-red-500 text-red-500'
-              }`}
-            >
-              {isPaused ? <Play className="w-3 h-3 md:w-4 md:h-4" /> : <Pause className="w-3 h-3 md:w-4 md:h-4" />}
-            </button>
+          {user && (
+            <div className="flex items-center gap-2 bg-neutral-800/50 px-3 py-1.5 rounded-full border border-white/10">
+              <User className="w-5 h-5 text-white/40" />
+              <span className="text-sm font-bold text-white truncate max-w-[100px]">{playerName || 'Player'}</span>
+            </div>
           )}
         </div>
       </div>
@@ -1349,19 +1548,15 @@ export default function App() {
       {/* Game Area */}
       <div 
         ref={containerRef}
-        className={`relative flex-1 w-full my-2 group touch-none md:cursor-none border-4 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 ${
+        className={`relative w-full max-w-5xl aspect-[1.5/1] my-4 group touch-none border-4 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 ${
           mode === 'destroyer' ? 'border-neutral-800' : 'border-red-900/50'
         }`}
-        onMouseMove={handleMouseMove}
-        onTouchMove={(e) => {
-          handleMouseMove(e);
-        }}
       >
         <canvas
           ref={canvasRef}
           width={GAME_WIDTH}
           height={GAME_HEIGHT}
-          className="w-full h-full bg-black object-contain"
+          className="w-full h-full bg-black rounded-sm"
           onMouseDown={handleShoot}
           onTouchStart={(e) => {
             e.preventDefault();
@@ -1379,13 +1574,13 @@ export default function App() {
                 className="mb-4 md:mb-8"
               >
                 <h2 className="text-4xl md:text-7xl font-black mb-2 text-red-600 tracking-tighter italic">
-                  {gameMode === 'level' && timerRef.current >= levelTime ? 'LEVEL COMPLETE' : 'GAME OVER'}
+                  {(gameMode === 'level' && timerRef.current >= levelTime) || (gameMode === 'custom' && timerRef.current <= 0) ? 'LEVEL COMPLETE' : 'GAME OVER'}
                 </h2>
                 <p className="text-red-500/60 uppercase tracking-widest text-[10px] md:text-sm mb-4">
-                  {gameMode === 'level' && timerRef.current >= levelTime ? 'You survived the challenge!' : 'The music has stopped.'}
+                  {(gameMode === 'level' && timerRef.current >= levelTime) || (gameMode === 'custom' && timerRef.current <= 0) ? 'You survived the challenge!' : 'The music has stopped.'}
                 </p>
 
-                {gameMode === 'level' && timerRef.current >= levelTime && (
+                {((gameMode === 'level' && timerRef.current >= levelTime) || (gameMode === 'custom' && timerRef.current <= 0)) && (
                   <div className="flex flex-col items-center gap-2 md:gap-4 mb-4 md:mb-8 bg-neutral-900/80 p-4 md:p-8 rounded-3xl border border-yellow-500/20 shadow-[0_0_30px_rgba(234,179,8,0.1)]">
                     <div className="flex gap-2 md:gap-4">
                       {[...Array(3)].map((_, i) => {
@@ -1426,19 +1621,23 @@ export default function App() {
                             type="text" 
                             value={playerName}
                             onChange={(e) => setPlayerName(e.target.value)}
+                            onBlur={async () => {
+                              if (playerName.trim() && user) {
+                                try {
+                                  await updateDoc(doc(db, 'users', user.uid), {
+                                    name: playerName.trim()
+                                  });
+                                } catch (error) {
+                                  console.error("Failed to update username", error);
+                                }
+                              }
+                            }}
                             placeholder="Your Name"
                             className="bg-transparent border-none outline-none text-white w-full font-bold text-sm md:text-base"
                             maxLength={20}
                           />
                         </div>
-                        <button 
-                          onClick={submitScore}
-                          disabled={isSubmitting || !playerName.trim()}
-                          className="w-full bg-white text-black py-3 md:py-4 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-white/90 disabled:opacity-50 text-sm md:text-base"
-                        >
-                          {isSubmitting ? <RefreshCw className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 md:w-5 md:h-5" />}
-                          SUBMIT SCORE
-                        </button>
+                        <p className="text-[10px] text-white/40 font-bold uppercase text-center">Score saved automatically</p>
                       </div>
                     ) : (
                       <button 
@@ -1450,52 +1649,239 @@ export default function App() {
                     )}
                   </div>
                 )}
+
+                {gameMode === 'custom' && customLevelData && timerRef.current <= 0 && (
+                  <div className="bg-neutral-900/80 p-4 md:p-6 rounded-2xl border border-white/10 max-w-md mx-auto mt-4">
+                    {(() => {
+                      const ratio = destroyedAsteroidsRef.current / Math.max(1, totalAsteroidsRef.current);
+                      let stars = 0;
+                      if (ratio >= 0.75) stars = 3;
+                      else if (ratio >= 0.50) stars = 2;
+                      else if (ratio >= 0.25) stars = 1;
+                      
+                      const isCreator = user && user.uid === customLevelData.creatorId;
+                      const canUpload = isCreator && stars === 3;
+
+                      return (
+                        <div className="flex flex-col gap-4">
+                          <div className="text-center">
+                            <div className="text-xl font-black text-white italic">CUSTOM LEVEL</div>
+                            <div className="text-sm text-white/50 font-bold uppercase">{customLevelData.name}</div>
+                          </div>
+                          
+                          {canUpload ? (
+                            <button 
+                              onClick={async () => {
+                                try {
+                                  await setDoc(doc(db, 'levels', customLevelData.id), customLevelData);
+                                  awardBadge('level_creator');
+                                  alert('Level uploaded successfully!');
+                                } catch (e) {
+                                  console.error(e);
+                                  alert('Failed to upload level.');
+                                }
+                              }}
+                              className="w-full bg-cyan-500 text-black py-3 md:py-4 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-cyan-400 text-sm md:text-base"
+                            >
+                              <Globe className="w-4 h-4 md:w-5 md:h-5" /> UPLOAD LEVEL
+                            </button>
+                          ) : isCreator ? (
+                            <div className="text-center text-red-500 font-bold text-xs uppercase">
+                              You need 3 stars to upload this level.
+                            </div>
+                          ) : null}
+                          {!isCreator && user && (
+                            <button 
+                              onClick={async () => {
+                                awardBadge('community_player');
+                                try {
+                                  await updateDoc(doc(db, 'levels', customLevelData.id), {
+                                    plays: increment(1)
+                                  });
+                                } catch (e) {
+                                  console.error(e);
+                                }
+                              }}
+                              className="w-full bg-emerald-500 text-black py-3 md:py-4 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-emerald-400 text-sm md:text-base"
+                            >
+                              <Star className="w-4 h-4 md:w-5 md:h-5" /> RATE LEVEL
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </motion.div>
             )}
 
-            <div className="flex flex-wrap justify-center gap-2 md:gap-4">
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => {
-                  if (!gameStarted) {
-                    setIsStartingFromMenu(true);
-                    setShowTutorialPrompt(true);
-                  } else {
-                    startGame();
-                  }
-                }}
-                className={`px-6 md:px-12 py-4 md:py-6 font-black text-xl md:text-3xl rounded-sm transition-colors flex items-center gap-2 md:gap-4 shadow-2xl ${
-                  mode === 'destroyer' ? 'bg-green-500 text-black hover:bg-green-400' : 'bg-red-500 text-black hover:bg-red-400'
-                }`}
-              >
-                {isGameOver ? <RefreshCw className="w-6 h-6 md:w-10 md:h-10" /> : <Rocket className="w-6 h-6 md:w-10 md:h-10" />}
-                {isGameOver ? 'RESTART' : 'START'}
-              </motion.button>
-              
-              {isGameOver && (
+            <div className="flex flex-col gap-4 md:gap-6 w-full max-w-md">
+              {!isGameOver ? (
+                <>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      setGameMode('infinite');
+                      startGame();
+                    }}
+                    className={`menu-btn w-full py-4 md:py-5 font-black text-xl md:text-2xl rounded-sm transition-colors flex items-center justify-center gap-3 shadow-2xl focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                      mode === 'destroyer' ? 'bg-green-500 text-black hover:bg-green-400' : 'bg-red-500 text-black hover:bg-red-400'
+                    }`}
+                  >
+                    <Rocket className="w-8 h-8 md:w-10 md:h-10" />
+                    INFINITE MODE
+                  </motion.button>
+
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      setShowLevelSelector(true);
+                    }}
+                    className="menu-btn w-full py-3 md:py-4 bg-neutral-800 text-white font-black text-lg md:text-2xl rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
+                  >
+                    <Trophy className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" />
+                    LEVELS MODE
+                  </motion.button>
+
+                  <div className="flex gap-4 w-full">
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => {
+                        if (!user) {
+                          alert("Please sign in to create levels.");
+                          return;
+                        }
+                        setShowLevelEditor(true);
+                      }}
+                      className="menu-btn flex-1 py-4 md:py-5 bg-neutral-800 text-white font-black text-sm md:text-lg rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
+                    >
+                      <PenTool className="w-5 h-5 md:w-6 md:h-6 text-cyan-500" />
+                      CREATE LEVEL
+                    </motion.button>
+
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setShowCommunity(true)}
+                      className="menu-btn flex-1 py-4 md:py-5 bg-neutral-800 text-white font-black text-sm md:text-lg rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
+                    >
+                      <Globe className="w-5 h-5 md:w-6 md:h-6 text-emerald-500" />
+                      COMMUNITY
+                    </motion.button>
+                  </div>
+                  
+                  <div className="flex gap-4 w-full">
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setMusicEnabled(!musicEnabled)}
+                      className={`menu-btn flex-1 py-3 font-black text-xs md:text-sm rounded-sm border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                        musicEnabled ? 'bg-neutral-800 text-white border-white/20' : 'bg-red-900/50 text-red-500 border-red-500/50'
+                      }`}
+                    >
+                      MUSIC: {musicEnabled ? 'ON' : 'OFF'}
+                    </motion.button>
+                    <button 
+                      onClick={() => setSfxEnabled(!sfxEnabled)}
+                      className={`menu-btn flex-1 py-3 font-black text-xs md:text-sm rounded-sm border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                        sfxEnabled ? 'bg-neutral-800 text-white border-white/20' : 'bg-red-900/50 text-red-500 border-red-500/50'
+                      }`}
+                    >
+                      SFX: {sfxEnabled ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+                  
+                  {user && (
+                    <div className="w-full flex items-center gap-2 bg-neutral-800/50 p-3 rounded-xl border border-white/10">
+                      <User className="w-5 h-5 text-white/40" />
+                      <input 
+                        type="text" 
+                        value={playerName}
+                        onChange={(e) => setPlayerName(e.target.value)}
+                        onBlur={async () => {
+                          if (playerName.trim() && user) {
+                            try {
+                              await updateDoc(doc(db, 'users', user.uid), {
+                                name: playerName.trim()
+                              });
+                              if (!userBadges.includes('username_changed')) {
+                                await updateDoc(doc(db, 'users', user.uid), {
+                                  badges: arrayUnion('username_changed')
+                                });
+                                setUserBadges(prev => [...prev, 'username_changed']);
+                              }
+                            } catch (error) {
+                              console.error("Failed to update username", error);
+                            }
+                          }
+                        }}
+                        placeholder="Your Username"
+                        className="bg-transparent border-none outline-none text-white w-full font-bold text-sm md:text-base"
+                        maxLength={20}
+                      />
+                    </div>
+                  )}
+                </>
+              ) : (
                 <motion.button
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => {
-                    setGameStarted(false);
-                    setIsGameOver(false);
-                    asteroidsRef.current = [];
-                    particlesRef.current = [];
-                    explosionsRef.current = [];
-                  }}
-                  className="px-6 md:px-8 py-4 md:py-6 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700 flex items-center gap-2 md:gap-3"
+                  onClick={() => startGame()}
+                  className={`menu-btn w-full py-6 md:py-8 font-black text-2xl md:text-4xl rounded-sm transition-colors flex items-center justify-center gap-4 shadow-2xl focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                    mode === 'destroyer' ? 'bg-green-500 text-black hover:bg-green-400' : 'bg-red-500 text-black hover:bg-red-400'
+                  }`}
                 >
-                  MENU
+                  <RefreshCw className="w-10 h-10 md:w-14 md:h-14" />
+                  RESTART
                 </motion.button>
               )}
+              
+              {isGameOver && (
+                <>
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => {
+                      setGameStarted(false);
+                      setIsGameOver(false);
+                      asteroidsRef.current = [];
+                      particlesRef.current = [];
+                      explosionsRef.current = [];
+                    }}
+                    className="menu-btn w-full py-4 md:py-5 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 md:gap-3 focus:outline-none focus:ring-4 focus:ring-white/50"
+                  >
+                    MENU
+                  </motion.button>
+                  <div className="flex gap-4 w-full">
+                    <button 
+                      onClick={() => setMusicEnabled(!musicEnabled)}
+                      className={`menu-btn flex-1 py-4 font-black text-sm md:text-base rounded-sm border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                        musicEnabled ? 'bg-neutral-800 text-white border-white/20' : 'bg-red-900/50 text-red-500 border-red-500/50'
+                      }`}
+                    >
+                      MUSIC: {musicEnabled ? 'ON' : 'OFF'}
+                    </button>
+                    <button 
+                      onClick={() => setSfxEnabled(!sfxEnabled)}
+                      className={`menu-btn flex-1 py-4 font-black text-sm md:text-base rounded-sm border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                        sfxEnabled ? 'bg-neutral-800 text-white border-white/20' : 'bg-red-900/50 text-red-500 border-red-500/50'
+                      }`}
+                    >
+                      SFX: {sfxEnabled ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+                </>
+              )}
 
-              {gameMode === 'infinite' && (
+              {!isGameOver && (
                 <motion.button
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setShowLeaderboard(true)}
-                  className="px-6 md:px-8 py-4 md:py-6 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700 flex items-center gap-2 md:gap-3"
+                  className="menu-btn w-full py-4 md:py-5 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 md:gap-3 focus:outline-none focus:ring-4 focus:ring-white/50"
                 >
                   <Trophy className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" /> LEADERBOARD
                 </motion.button>
@@ -1508,11 +1894,11 @@ export default function App() {
           </div>
         ) : isPaused ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 backdrop-blur-sm p-4">
-            <h2 className="text-4xl md:text-6xl font-black mb-8 italic tracking-tighter">PAUSED</h2>
-            <div className="flex flex-col gap-3 md:gap-4 w-full max-w-xs">
+            <h2 className="text-3xl md:text-5xl font-black mb-6 italic tracking-tighter">PAUSED</h2>
+            <div className="flex flex-col gap-2 md:gap-3 w-full max-w-xs">
               <button 
                 onClick={togglePause}
-                className={`w-full py-4 md:py-5 font-black text-xl md:text-2xl rounded-sm shadow-xl ${
+                className={`menu-btn w-full py-2 md:py-3 font-black text-base md:text-lg rounded-sm shadow-xl focus:outline-none focus:ring-4 focus:ring-white/50 ${
                   mode === 'destroyer' ? 'bg-green-500 text-black' : 'bg-red-500 text-black'
                 }`}
               >
@@ -1520,10 +1906,38 @@ export default function App() {
               </button>
               <button 
                 onClick={() => startGame()}
-                className="w-full py-4 md:py-5 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700"
+                className="menu-btn w-full py-2 md:py-3 bg-neutral-800 text-white font-black text-sm md:text-base rounded-sm hover:bg-neutral-700 focus:outline-none focus:ring-4 focus:ring-white/50"
               >
                 RESTART
               </button>
+              <button 
+                onClick={() => setQuality(prev => prev === 'high' ? 'low' : 'high')}
+                className={`menu-btn w-full py-2 md:py-3 font-black text-sm md:text-base rounded-sm border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                  quality === 'high' 
+                    ? 'bg-neutral-900 text-white border-white/20' 
+                    : 'bg-yellow-500 text-black border-yellow-400'
+                }`}
+              >
+                QUALITY: {quality.toUpperCase()}
+              </button>
+              <div className="flex gap-2 w-full">
+                <button 
+                  onClick={() => setMusicEnabled(!musicEnabled)}
+                  className={`menu-btn flex-1 py-2 md:py-3 font-black text-xs md:text-sm rounded-sm border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                    musicEnabled ? 'bg-neutral-800 text-white border-white/20' : 'bg-red-900/50 text-red-500 border-red-500/50'
+                  }`}
+                >
+                  MUSIC: {musicEnabled ? 'ON' : 'OFF'}
+                </button>
+                <button 
+                  onClick={() => setSfxEnabled(!sfxEnabled)}
+                  className={`menu-btn flex-1 py-2 md:py-3 font-black text-xs md:text-sm rounded-sm border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                    sfxEnabled ? 'bg-neutral-800 text-white border-white/20' : 'bg-red-900/50 text-red-500 border-red-500/50'
+                  }`}
+                >
+                  SFX: {sfxEnabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
               <button 
                 onClick={() => {
                   setIsPaused(false);
@@ -1537,29 +1951,25 @@ export default function App() {
                     audioRef.current.currentTime = 0;
                   }
                 }}
-                className="w-full py-4 md:py-5 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700"
+                className="menu-btn w-full py-2 md:py-3 bg-neutral-800 text-white font-black text-sm md:text-base rounded-sm hover:bg-neutral-700 focus:outline-none focus:ring-4 focus:ring-white/50"
               >
                 MENU
               </button>
             </div>
           </div>
-        ) : (
-          <>
-            {/* Crosshair - Hidden on mobile */}
-            <div
-              ref={aimerRef}
-              className="absolute pointer-events-none z-10 hidden md:block"
-            >
-              <div className="relative flex flex-col items-center" style={{ transform: 'translate(-50%, -50%)' }}>
-                <Crosshair className={`w-16 h-16 opacity-80 ${mode === 'destroyer' ? 'text-green-500' : 'text-red-500'}`} />
-                <div className={`absolute top-full mt-2 text-[10px] font-black italic tracking-tighter px-2 py-0.5 rounded border whitespace-nowrap ${
-                  mode === 'destroyer' ? 'bg-green-500 text-black border-green-400' : 'bg-red-500 text-black border-red-400'
-                }`}>
-                  {mode === 'destroyer' ? 'EVOLT' : 'RVOLT'}
-                </div>
-              </div>
+        ) : null}
+
+        {/* Crosshair - Hidden on mobile */}
+        {gameStarted && (
+          <div
+            ref={aimerRef}
+            className="fixed pointer-events-none z-[9999] hidden md:block"
+            style={{ left: -100, top: -100 }}
+          >
+            <div className="relative flex flex-col items-center" style={{ transform: 'translate(-50%, -50%)' }}>
+              <Crosshair className={`w-16 h-16 opacity-80 ${mode === 'destroyer' ? 'text-green-500' : 'text-red-500'}`} />
             </div>
-          </>
+          </div>
         )}
 
       {/* Game HUD */}
@@ -1583,45 +1993,307 @@ export default function App() {
         />
       )}
 
-        {/* Tutorial Prompt Modal */}
+        {/* Modals removed to simplify flow */}
+
+        {/* Level Selector Modal */}
         <AnimatePresence>
-          {showTutorialPrompt && (
+          {showLevelSelector && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4"
+        >
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            className="bg-neutral-900 border-2 border-white/20 p-6 md:p-8 rounded-3xl max-w-2xl w-full max-h-[80vh] flex flex-col"
+          >
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-3xl font-black italic tracking-tighter">SELECT LEVEL</h2>
+              <button onClick={() => setShowLevelSelector(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-4 md:grid-cols-5 gap-3 md:gap-4 overflow-y-auto pr-2 pb-4">
+              {[...Array(20)].map((_, i) => {
+                const levelNum = i + 1;
+                const isLocked = levelNum > unlockedLevels;
+                return (
+                  <button
+                    key={levelNum}
+                    disabled={isLocked}
+                    onClick={() => {
+                      if (isLocked) return;
+                      setGameMode('level');
+                      setGameId(levelNum);
+                      setShowLevelSelector(false);
+                      startGame();
+                    }}
+                    className={`aspect-square flex flex-col items-center justify-center rounded-xl border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                      isLocked ? 'bg-neutral-900 border-white/5 opacity-50 cursor-not-allowed' :
+                      levelNum % 5 === 0 ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-500 hover:bg-yellow-500/30 hover:scale-105' : 'bg-neutral-800 border-white/10 hover:bg-neutral-700 hover:border-white/30 hover:scale-105'
+                    }`}
+                  >
+                    {isLocked ? (
+                      <Lock className="w-8 h-8 md:w-10 md:h-10 text-white/20" />
+                    ) : (
+                      <>
+                        <span className="text-2xl md:text-3xl font-black">{levelNum}</span>
+                        {levelNum % 5 === 0 && <Star className="w-3 h-3 md:w-4 md:h-4 mt-1" />}
+                      </>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+        {/* Level Editor Modal */}
+        <AnimatePresence>
+          {showLevelEditor && (
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-black/95 z-50 flex items-center justify-center p-8 backdrop-blur-md"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4"
             >
-              <div className="w-full max-w-md bg-neutral-900 rounded-3xl border border-white/10 overflow-hidden shadow-2xl p-8 text-center">
-                <div className="w-20 h-20 bg-cyan-500/20 rounded-full flex items-center justify-center mx-auto mb-6 border border-cyan-500/30">
-                  <HelpCircle className="w-10 h-10 text-cyan-400" />
-                </div>
-                <h3 className="text-3xl font-black italic tracking-tighter mb-2">NEED TRAINING?</h3>
-                <p className="text-white/40 text-sm font-bold mb-8 leading-relaxed">
-                  WOULD YOU LIKE TO START THE 1-MINUTE TRAINING SESSION TO LEARN THE SYSTEM MECHANICS?
-                </p>
-                <div className="flex flex-col gap-3">
-                  <button 
-                    onClick={startTutorial}
-                    className="w-full bg-cyan-500 text-black py-4 rounded-xl font-black hover:bg-cyan-400 transition-colors"
-                  >
-                    START TRAINING
-                  </button>
-                  <button 
-                    onClick={skipTutorial}
-                    className="w-full bg-white/5 text-white/60 py-4 rounded-xl font-black hover:bg-white/10 transition-colors"
-                  >
-                    SKIP FOR NOW
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-neutral-900 border-2 border-white/20 p-6 md:p-8 rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-y-auto"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-3xl font-black italic tracking-tighter flex items-center gap-3">
+                    <PenTool className="text-cyan-500" /> LEVEL EDITOR
+                  </h2>
+                  <button onClick={() => setShowLevelEditor(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                    <X className="w-6 h-6" />
                   </button>
                 </div>
-              </div>
+                
+                {!user ? (
+                  <div className="text-center py-12">
+                    <Users className="w-16 h-16 mx-auto mb-4 opacity-20" />
+                    <p className="text-white/40 mb-6 font-bold">LOGIN TO CREATE AND UPLOAD LEVELS</p>
+                    <button 
+                      onClick={handleLogin}
+                      className="bg-white text-black px-8 py-4 rounded-xl font-black hover:bg-white/90"
+                    >
+                      LOGIN WITH GOOGLE
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest">Level Name</label>
+                      <input 
+                        type="text" 
+                        value={customLevelDraft.name || ''}
+                        onChange={e => setCustomLevelDraft(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors"
+                        placeholder="My Awesome Level"
+                        maxLength={30}
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest text-red-500">Ruby Count</label>
+                        <input 
+                          type="number" 
+                          value={customLevelDraft.rubyCount || 0}
+                          onChange={e => setCustomLevelDraft(prev => ({ ...prev, rubyCount: Math.max(0, parseInt(e.target.value) || 0) }))}
+                          className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-red-500 transition-colors"
+                          min="0"
+                          max="100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest text-emerald-500">Emerald Count</label>
+                        <input 
+                          type="number" 
+                          value={customLevelDraft.emeraldCount || 0}
+                          onChange={e => setCustomLevelDraft(prev => ({ ...prev, emeraldCount: Math.max(0, parseInt(e.target.value) || 0) }))}
+                          className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors"
+                          min="0"
+                          max="100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest text-yellow-500">Star Count</label>
+                        <input 
+                          type="number" 
+                          value={customLevelDraft.starCount || 0}
+                          onChange={e => setCustomLevelDraft(prev => ({ ...prev, starCount: Math.max(0, parseInt(e.target.value) || 0) }))}
+                          className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-yellow-500 transition-colors"
+                          min="0"
+                          max="100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest text-cyan-500">Time Limit (s)</label>
+                        <input 
+                          type="number" 
+                          value={customLevelDraft.timeLimit || 60}
+                          onChange={e => setCustomLevelDraft(prev => ({ ...prev, timeLimit: Math.max(10, parseInt(e.target.value) || 60) }))}
+                          className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors"
+                          min="10"
+                          max="300"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Music className="w-4 h-4"/> Custom Song URL (Optional)</label>
+                      <input 
+                        type="text" 
+                        value={customLevelDraft.songUrl || ''}
+                        onChange={e => {
+                          const url = e.target.value;
+                          const urlPattern = /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([/\w .-]*)*\/?$/;
+                          if (url && !urlPattern.test(url)) {
+                            alert("Please enter a valid URL.");
+                            return;
+                          }
+                          setCustomLevelDraft(prev => ({ ...prev, songUrl: url }));
+                        }}
+                        className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-sm"
+                        placeholder="https://example.com/song.mp3"
+                      />
+                    </div>
+                    
+                    <button 
+                      onClick={async () => {
+                        if (!customLevelDraft.timeLimit) return alert("Please set a time limit first.");
+                        const prompt = `Distribute ${customLevelDraft.rubyCount || 0} rubies, ${customLevelDraft.emeraldCount || 0} emeralds, and ${customLevelDraft.starCount || 0} stars evenly over ${customLevelDraft.timeLimit} seconds. Return the result as JSON with fields: rubyCount, emeraldCount, starCount.`;
+                        const response = await ai.models.generateContent({
+                          model: "gemini-3-flash-preview",
+                          contents: prompt,
+                          config: { responseMimeType: "application/json" }
+                        });
+                        const data = JSON.parse(response.text);
+                        setCustomLevelDraft(prev => ({ ...prev, ...data }));
+                      }}
+                      className="w-full bg-purple-500 text-white font-black py-2 rounded-xl hover:bg-purple-400 transition-colors"
+                    >
+                      AI DISTRIBUTE ITEMS
+                    </button>
+
+                    <button 
+                      onClick={() => alert("Donations are not currently supported. Thank you for your interest!")}
+                      className="w-full bg-yellow-500 text-black font-black py-2 rounded-xl hover:bg-yellow-400 transition-colors"
+                    >
+                      DONATE TO SUPPORT
+                    </button>
+
+                    <div className="pt-4 flex gap-4">
+                      <button 
+                        onClick={() => {
+                          if (!customLevelDraft.name) return alert("Please enter a level name.");
+                          const newLevel: CustomLevel = {
+                            id: Date.now().toString(),
+                            name: customLevelDraft.name,
+                            creatorId: user.uid,
+                            creatorName: playerName || 'Anonymous',
+                            rubyCount: customLevelDraft.rubyCount || 0,
+                            emeraldCount: customLevelDraft.emeraldCount || 0,
+                            starCount: customLevelDraft.starCount || 0,
+                            timeLimit: customLevelDraft.timeLimit || 60,
+                            songUrl: customLevelDraft.songUrl,
+                            plays: 0,
+                            createdAt: Date.now()
+                          };
+                          setCustomLevelData(newLevel);
+                          setGameMode('custom');
+                          setShowLevelEditor(false);
+                          startGame();
+                        }}
+                        className="flex-1 bg-cyan-500 text-black font-black py-4 rounded-xl hover:bg-cyan-400 transition-colors"
+                      >
+                        TEST LEVEL
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-white/40 text-center uppercase font-bold">You must beat your level with 3 stars to upload it.</p>
+                  </div>
+                )}
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Badges Modal */}
+        {/* Community Levels Modal */}
         <AnimatePresence>
-          {showBadges && (
+          {showCommunity && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-neutral-900 border-2 border-white/20 p-6 md:p-8 rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-3xl font-black italic tracking-tighter flex items-center gap-3">
+                    <Globe className="text-emerald-500" /> COMMUNITY LEVELS
+                  </h2>
+                  <button onClick={() => setShowCommunity(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+                  {communityLevels.length === 0 ? (
+                    <div className="text-center py-12 text-white/40 font-bold uppercase tracking-widest">
+                      No community levels found. Be the first to create one!
+                    </div>
+                  ) : (
+                    communityLevels.map(level => (
+                      <div key={level.id} className="bg-black/40 border border-white/10 p-4 rounded-2xl flex items-center justify-between hover:border-white/30 transition-colors">
+                        <div>
+                          <h3 className="text-xl font-black text-white">{level.name}</h3>
+                          <p className="text-xs text-white/50 font-bold uppercase tracking-widest">By {level.creatorName} • {level.plays} Plays</p>
+                          <div className="flex gap-3 mt-2 text-[10px] font-bold text-white/70">
+                            <span className="text-red-400">{level.rubyCount} Rubies</span>
+                            <span className="text-emerald-400">{level.emeraldCount} Emeralds</span>
+                            <span className="text-yellow-400">{level.starCount} Stars</span>
+                            <span className="text-cyan-400">{level.timeLimit}s</span>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            if (!user) {
+                              alert("Please sign in to play community levels.");
+                              return;
+                            }
+                            setCustomLevelData(level);
+                            setGameMode('custom');
+                            setShowCommunity(false);
+                            startGame();
+                          }}
+                          className="bg-emerald-500 text-black px-6 py-3 rounded-xl font-black hover:bg-emerald-400 transition-colors"
+                        >
+                          PLAY
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+      {showBadges && (
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
