@@ -126,23 +126,23 @@ const HeaderHUD = React.memo(({ volumeRef, mode, volumeFlash, destroyedAsteroids
   const progress = total > 0 ? (destroyed / total) * 100 : 0;
 
   return (
-    <div className={`flex items-center gap-4 bg-neutral-900/90 backdrop-blur-xl px-4 py-2 rounded-xl border-2 transition-all duration-500 shadow-lg ${
-      mode === 'destroyer' ? 'border-green-500/20' : 'border-red-500/20'
+    <div className={`flex items-center gap-2 bg-neutral-900/90 backdrop-blur-xl px-2 py-1 rounded-lg border transition-all duration-500 shadow-md ${
+      mode === 'destroyer' ? 'border-green-500/10' : 'border-red-500/10'
     } ${volumeFlash === 'hit' ? 'scale-105 border-green-500' : volumeFlash === 'miss' ? 'scale-95 border-red-500' : ''}`}>
       
       {/* Volume Bar */}
-      <div className="flex items-center gap-2">
-        <div className={`p-1 rounded-lg ${mode === 'destroyer' ? 'bg-green-500 text-black' : 'bg-red-500 text-black'}`}>
-          {volume <= 0 ? <VolumeX className="w-3 h-3 md:w-4 md:h-4" /> : volume < 30 ? <Volume1 className="w-3 h-3 md:w-4 md:h-4" /> : <Volume2 className="w-3 h-3 md:w-4 md:h-4" />}
+      <div className="flex items-center gap-1">
+        <div className={`p-0.5 rounded-md ${mode === 'destroyer' ? 'bg-green-500 text-black' : 'bg-red-500 text-black'}`}>
+          {volume <= 0 ? <VolumeX className="w-2.5 h-2.5" /> : volume < 30 ? <Volume1 className="w-2.5 h-2.5" /> : <Volume2 className="w-2.5 h-2.5" />}
         </div>
-        <div className="flex flex-col w-20 md:w-24">
-          <div className="flex justify-between items-center mb-1">
-            <span className="font-black text-[8px] md:text-[10px] tracking-widest uppercase opacity-50">Volume</span>
-            <span className="font-black text-xs md:text-sm italic tracking-tighter">
-              {Math.round(volume)}<span className="text-[8px] not-italic ml-0.5 opacity-50">%</span>
+        <div className="flex flex-col w-16">
+          <div className="flex justify-between items-center mb-0.5">
+            <span className="font-black text-[6px] tracking-widest uppercase opacity-50">Vol</span>
+            <span className="font-black text-[10px] italic tracking-tighter">
+              {Math.round(volume)}<span className="text-[6px] not-italic ml-0.5 opacity-50">%</span>
             </span>
           </div>
-          <div className="h-1.5 md:h-2 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
+          <div className="h-1 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
             <div 
               className={`h-full relative transition-all duration-200 ${mode === 'destroyer' ? 'bg-green-500' : 'bg-red-500'}`}
               style={{ width: `${volume}%` }}
@@ -369,6 +369,16 @@ export default function App() {
   const isGameOverRef = useRef(isGameOver);
   useEffect(() => { isGameOverRef.current = isGameOver; }, [isGameOver]);
   const [mode, setMode] = useState<'destroyer' | 'creator'>('destroyer');
+  const [customSongUrl, setCustomSongUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setCustomSongUrl(url);
+    }
+  };
   const [gameMode, setGameMode] = useState<'infinite' | 'level' | 'tutorial' | 'custom'>('infinite');
   const gameModeRef = useRef(gameMode);
   const [customLevelData, setCustomLevelData] = useState<CustomLevel | null>(null);
@@ -759,6 +769,7 @@ export default function App() {
     if (gameMode === 'tutorial') return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3';
     if (gameMode === 'infinite') return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3';
     
+    if (customSongUrl) return customSongUrl;
     if (gameMode === 'custom' && customLevelData?.songUrl) {
       return customLevelData.songUrl;
     }
@@ -1485,7 +1496,7 @@ export default function App() {
       onTouchMove={handleMouseMove}
     >
       {/* Header */}
-      <div className="w-full flex justify-between items-center px-1 md:px-2 pt-1">
+      <div className="w-full flex justify-between items-center px-0.5 md:px-1 pt-0.5">
         <div className="flex flex-col">
           <h1 className="text-sm md:text-xl font-black tracking-tighter flex items-center gap-1 md:gap-2">
             <button onClick={() => {
@@ -1505,14 +1516,23 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex gap-1 items-center">
+        <div className="flex gap-0.5 items-center">
           {/* Top Bar Icons */}
           <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="p-1 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+            title="Custom Music"
+          >
+            <Music className="w-3 h-3 text-white" />
+          </button>
+          <input type="file" ref={fileInputRef} accept="audio/*" onChange={handleFileChange} className="hidden" />
+          
+          <button 
             onClick={() => setShowBadges(true)}
-            className="p-1.5 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+            className="p-1 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
             title="Badges"
           >
-            <Award className="w-4 h-4 text-yellow-500" />
+            <Award className="w-3 h-3 text-yellow-500" />
           </button>
           
           {!gameStarted && (
@@ -1521,25 +1541,25 @@ export default function App() {
                 setGameMode('tutorial');
                 startGame();
               }}
-              className="p-1.5 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+              className="p-1 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
               title="Training / Tutorial"
             >
-              <Info className="w-4 h-4 text-cyan-500" />
+              <Info className="w-3 h-3 text-cyan-500" />
             </button>
           )}
 
           <button 
             onClick={user ? handleLogout : handleLogin}
-            className="p-1.5 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+            className="p-1 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
             title={user ? "Sign Out" : "Sign In"}
           >
-            {user ? <LogOut className="w-4 h-4 text-red-500" /> : <LogIn className="w-4 h-4 text-emerald-500" />}
+            {user ? <LogOut className="w-3 h-3 text-red-500" /> : <LogIn className="w-3 h-3 text-emerald-500" />}
           </button>
 
           {user && (
-            <div className="flex items-center gap-1 bg-neutral-800/50 px-2 py-1 rounded-full border border-white/10">
-              <User className="w-4 h-4 text-white/40" />
-              <span className="text-xs font-bold text-white truncate max-w-[80px]">{playerName || 'Player'}</span>
+            <div className="flex items-center gap-0.5 bg-neutral-800/50 px-1 py-0.5 rounded-full border border-white/10">
+              <User className="w-3 h-3 text-white/40" />
+              <span className="text-[10px] font-bold text-white truncate max-w-[60px]">{playerName || 'Player'}</span>
             </div>
           )}
         </div>
@@ -2426,20 +2446,20 @@ export default function App() {
           <div className="md:hidden fixed bottom-20 left-0 right-0 z-40 flex justify-between px-4 pointer-events-none">
             <button 
               onClick={() => setMode('destroyer')}
-              className={`w-20 h-20 rounded-full font-black text-base border-4 transition-all active:scale-90 pointer-events-auto flex flex-col items-center justify-center shadow-2xl ${
-                mode === 'destroyer' ? 'bg-green-500 text-black border-green-400 shadow-[0_0_30px_rgba(34,197,94,0.6)]' : 'bg-neutral-900/90 backdrop-blur-md text-green-500/40 border-neutral-800'
+              className={`w-16 h-16 rounded-full font-black text-xs border-4 transition-all active:scale-90 pointer-events-auto flex flex-col items-center justify-center shadow-2xl ${
+                mode === 'destroyer' ? 'bg-green-500 text-black border-green-400 shadow-[0_0_20px_rgba(34,197,94,0.4)]' : 'bg-neutral-900/90 backdrop-blur-md text-green-500/40 border-neutral-800'
               }`}
             >
-              <Zap className={`w-5 h-5 mb-1 ${mode === 'destroyer' ? 'fill-black' : 'fill-green-500/20'}`} />
+              <Zap className={`w-4 h-4 mb-0.5 ${mode === 'destroyer' ? 'fill-black' : 'fill-green-500/20'}`} />
               EVOLT
             </button>
             <button 
               onClick={() => setMode('creator')}
-              className={`w-20 h-20 rounded-full font-black text-base border-4 transition-all active:scale-90 pointer-events-auto flex flex-col items-center justify-center shadow-2xl ${
-                mode === 'creator' ? 'bg-red-500 text-black border-red-400 shadow-[0_0_30px_rgba(239,68,68,0.6)]' : 'bg-neutral-900/90 backdrop-blur-md text-red-500/40 border-neutral-800'
+              className={`w-16 h-16 rounded-full font-black text-xs border-4 transition-all active:scale-90 pointer-events-auto flex flex-col items-center justify-center shadow-2xl ${
+                mode === 'creator' ? 'bg-red-500 text-black border-red-400 shadow-[0_0_20px_rgba(239,68,68,0.4)]' : 'bg-neutral-900/90 backdrop-blur-md text-red-500/40 border-neutral-800'
               }`}
             >
-              <Flame className={`w-5 h-5 mb-1 ${mode === 'creator' ? 'fill-black' : 'fill-red-500/20'}`} />
+              <Flame className={`w-4 h-4 mb-0.5 ${mode === 'creator' ? 'fill-black' : 'fill-red-500/20'}`} />
               RVOLT
             </button>
           </div>
