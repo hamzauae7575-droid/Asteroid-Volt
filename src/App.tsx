@@ -351,6 +351,7 @@ export default function App() {
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const asteroidsRef = useRef<Asteroid[]>([]);
   const particlesRef = useRef<Particle[]>([]);
   const explosionsRef = useRef<{ id: number; x: number; y: number; life: number }[]>([]);
@@ -971,17 +972,32 @@ export default function App() {
   const handleShoot = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     if (!gameStartedRef.current || isPausedRef.current || isGameOverRef.current || isTutorialPausedRef.current) return;
 
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
 
-    // Scale coordinates to internal resolution
-    const scaleX = GAME_WIDTH / rect.width;
-    const scaleY = GAME_HEIGHT / rect.height;
-    const x = (clientX - rect.left) * scaleX;
-    const y = (clientY - rect.top) * scaleY;
+    // Calculate actual drawing area within the canvas element (due to object-contain)
+    const bufferRatio = GAME_WIDTH / GAME_HEIGHT;
+    const elementRatio = rect.width / rect.height;
+    
+    let drawWidth, drawHeight, drawLeft, drawTop;
+    if (elementRatio > bufferRatio) {
+      drawHeight = rect.height;
+      drawWidth = drawHeight * bufferRatio;
+      drawLeft = rect.left + (rect.width - drawWidth) / 2;
+      drawTop = rect.top;
+    } else {
+      drawWidth = rect.width;
+      drawHeight = drawWidth / bufferRatio;
+      drawLeft = rect.left;
+      drawTop = rect.top + (rect.height - drawHeight) / 2;
+    }
+
+    const x = (clientX - drawLeft) * (GAME_WIDTH / drawWidth);
+    const y = (clientY - drawTop) * (GAME_HEIGHT / drawHeight);
 
     let hit = false;
     let hitBomb = false;
@@ -1061,11 +1077,16 @@ export default function App() {
     }
   }, [createParticles, awardBadge]);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+  const handleMouseMove = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect || !aimerRef.current) return;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    
     aimerRef.current.style.left = `${x}px`;
     aimerRef.current.style.top = `${y}px`;
   }, []);
@@ -1326,20 +1347,27 @@ export default function App() {
       </div>
 
       {/* Game Area */}
-      <div className="relative flex-1 w-full my-2 group touch-none">
+      <div 
+        ref={containerRef}
+        className={`relative flex-1 w-full my-2 group touch-none md:cursor-none border-4 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 ${
+          mode === 'destroyer' ? 'border-neutral-800' : 'border-red-900/50'
+        }`}
+        onMouseMove={handleMouseMove}
+        onTouchMove={(e) => {
+          handleMouseMove(e);
+        }}
+      >
         <canvas
           ref={canvasRef}
           width={GAME_WIDTH}
           height={GAME_HEIGHT}
-          className={`w-full h-full bg-black border-4 rounded-lg md:cursor-none shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 object-contain ${
-            mode === 'destroyer' ? 'border-neutral-800' : 'border-red-900/50'
-          }`}
+          className="w-full h-full bg-black object-contain"
           onMouseDown={handleShoot}
           onTouchStart={(e) => {
             e.preventDefault();
             handleShoot(e);
+            handleMouseMove(e); // Update crosshair on initial touch
           }}
-          onMouseMove={handleMouseMove}
         />
 
         {(!gameStarted || isGameOver) ? (
@@ -1520,16 +1548,15 @@ export default function App() {
             {/* Crosshair - Hidden on mobile */}
             <div
               ref={aimerRef}
-              className="absolute pointer-events-none z-10 hidden md:flex flex-col items-center gap-2"
-              style={{ 
-                transform: 'translate(-50%, -50%)' 
-              }}
+              className="absolute pointer-events-none z-10 hidden md:block"
             >
-              <Crosshair className={`w-16 h-16 opacity-80 ${mode === 'destroyer' ? 'text-green-500' : 'text-red-500'}`} />
-              <div className={`text-[10px] font-black italic tracking-tighter px-2 py-0.5 rounded border ${
-                mode === 'destroyer' ? 'bg-green-500 text-black border-green-400' : 'bg-red-500 text-black border-red-400'
-              }`}>
-                {mode === 'destroyer' ? 'EVOLT' : 'RVOLT'}
+              <div className="relative flex flex-col items-center" style={{ transform: 'translate(-50%, -50%)' }}>
+                <Crosshair className={`w-16 h-16 opacity-80 ${mode === 'destroyer' ? 'text-green-500' : 'text-red-500'}`} />
+                <div className={`absolute top-full mt-2 text-[10px] font-black italic tracking-tighter px-2 py-0.5 rounded border whitespace-nowrap ${
+                  mode === 'destroyer' ? 'bg-green-500 text-black border-green-400' : 'bg-red-500 text-black border-red-400'
+                }`}>
+                  {mode === 'destroyer' ? 'EVOLT' : 'RVOLT'}
+                </div>
               </div>
             </div>
           </>
