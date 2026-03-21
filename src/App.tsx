@@ -324,14 +324,14 @@ const StarHUD = React.memo(({ totalAsteroids, destroyedAsteroids }: { totalAster
               const isActive = ratio >= threshold;
               return (
                 <motion.div
-                  key={`star-${s}`}
+                  key={s}
                   animate={{ 
                     scale: isActive ? [1, 1.2, 1] : 1,
                     opacity: isActive ? 1 : 0.2
                   }}
                   className={`${isActive ? 'text-yellow-400' : 'text-white'}`}
                 >
-                  <Star className={`w-4 h-4 md:w-6 md:h-6 ${isActive ? 'fill-current' : ''}`} />
+                  <Star className={`w-6 h-6 ${isActive ? 'fill-current' : ''}`} />
                 </motion.div>
               );
             })}
@@ -1478,7 +1478,7 @@ export default function App() {
 
   return (
     <div 
-      className={`h-screen flex flex-col items-center justify-between p-1 font-mono transition-colors duration-500 overflow-hidden select-none ${
+      className={`h-screen flex flex-col items-center justify-between p-2 font-mono transition-colors duration-500 overflow-hidden select-none ${
         mode === 'destroyer' ? 'bg-neutral-950 text-green-500' : 'bg-neutral-900 text-red-500'
       } ${gameStarted ? 'md:cursor-none' : ''}`}
       onMouseMove={handleMouseMove}
@@ -1588,7 +1588,7 @@ export default function App() {
                         const active = (i === 0 && ratio >= 0.25) || (i === 1 && ratio >= 0.5) || (i === 2 && ratio >= 0.75);
                         return (
                           <motion.div
-                            key={`star-end-${i}`}
+                            key={i}
                             initial={{ scale: 0, rotate: -180 }}
                             animate={{ scale: 1, rotate: 0 }}
                             transition={{ delay: 0.5 + i * 0.2, type: 'spring' }}
@@ -2023,7 +2023,7 @@ export default function App() {
                 const isLocked = levelNum > unlockedLevels;
                 return (
                   <button
-                    key={`level-${levelNum}`}
+                    key={levelNum}
                     disabled={isLocked}
                     onClick={() => {
                       if (isLocked) return;
@@ -2258,7 +2258,7 @@ export default function App() {
                     </div>
                   ) : (
                     communityLevels.map(level => (
-                      <div key={`community-${level.id}`} className="bg-black/40 border border-white/10 p-4 rounded-2xl flex items-center justify-between hover:border-white/30 transition-colors">
+                      <div key={level.id} className="bg-black/40 border border-white/10 p-4 rounded-2xl flex items-center justify-between hover:border-white/30 transition-colors">
                         <div>
                           <h3 className="text-xl font-black text-white">{level.name}</h3>
                           <p className="text-xs text-white/50 font-bold uppercase tracking-widest">By {level.creatorName} • {level.plays} Plays</p>
@@ -2318,7 +2318,7 @@ export default function App() {
                     const isEarned = userBadges.includes(badge.id);
                     return (
                       <div 
-                        key={`badge-${badge.id}`}
+                        key={badge.id}
                         className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${
                           isEarned ? 'bg-white/5 border-white/20' : 'bg-black/40 border-white/5 opacity-40 grayscale'
                         }`}
@@ -2390,7 +2390,7 @@ export default function App() {
                     <div className="flex flex-col gap-2">
                       {leaderboard.map((entry, i) => (
                         <div 
-                          key={`leaderboard-${entry.id}`}
+                          key={entry.id}
                           className={`flex items-center justify-between p-4 rounded-xl border transition-all ${
                             entry.uid === user?.uid ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5'
                           }`}
