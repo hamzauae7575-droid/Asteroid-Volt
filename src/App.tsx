@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play, Bomb, RefreshCw, Trophy, Clock, Infinity, LogIn, LogOut, User, Send, HelpCircle, Award, Star, Shield, Target, Flame, Crown, Medal, Sparkles, Info, Heart } from 'lucide-react';
+import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play, Bomb, RefreshCw, Trophy, Clock, Infinity, LogIn, LogOut, User, Send, HelpCircle, Award, Star, Shield, Target, Flame, Crown, Medal, Sparkles, Info } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
 import { getFirestore, collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp, Timestamp, doc, setDoc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
@@ -59,6 +59,8 @@ interface Asteroid {
   id: number;
   x: number;
   y: number;
+  vx: number;
+  vy: number;
   size: number;
   speed: number;
   angle: number;
@@ -76,7 +78,9 @@ interface Particle {
   vx: number;
   vy: number;
   life: number;
-  color: string;
+  r: number;
+  g: number;
+  b: number;
 }
 
 const GAME_WIDTH = 1200;
@@ -86,43 +90,161 @@ const MAX_VOLUME = 100;
 // Memoized HUD Components for performance
 const VolumeHUD = React.memo(({ volume, mode, volumeFlash }: { volume: number, mode: 'destroyer' | 'creator', volumeFlash: 'hit' | 'miss' | null }) => {
   return (
-    <div className="w-full px-4 pb-4">
-      <div className={`flex items-center gap-6 bg-neutral-900/80 backdrop-blur-md p-6 rounded-2xl border-2 transition-all duration-300 ${
-        volumeFlash === 'hit' ? 'border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.3)]' : 
-        volumeFlash === 'miss' ? 'border-red-500 shadow-[0_0_30px_rgba(239,68,68,0.3)]' : 'border-neutral-800'
-      }`}>
-        <div className="flex items-center gap-3">
-          {volume > 60 ? <Volume2 className="w-8 h-8 text-green-400" /> : 
-           volume > 20 ? <Volume1 className="w-8 h-8 text-yellow-400" /> : 
-           <VolumeX className="w-8 h-8 text-red-500 animate-pulse" />}
-        </div>
-        <div className="flex-1 h-6 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
-          <motion.div 
-            className={`h-full relative ${mode === 'destroyer' ? 'bg-green-500' : 'bg-red-500'}`}
-            animate={{ width: `${volume}%` }}
-            transition={{ type: 'spring', bounce: 0, duration: 0.2 }}
-          >
-            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-white/20" />
-          </motion.div>
-          <div className="absolute inset-0 flex justify-between px-2 pointer-events-none">
-            {[...Array(20)].map((_, i) => (
-              <div key={i} className="w-px h-full bg-black/40" />
-            ))}
+    <div className={`fixed bottom-4 left-4 right-4 md:left-auto md:right-8 md:bottom-8 md:w-96 bg-neutral-900/90 backdrop-blur-xl p-4 md:p-8 rounded-3xl border-2 transition-all duration-500 shadow-2xl z-40 ${
+      mode === 'destroyer' ? 'border-green-500/20' : 'border-red-500/20'
+    } ${volumeFlash === 'hit' ? 'scale-105 border-green-500' : volumeFlash === 'miss' ? 'scale-95 border-red-500' : ''}`}>
+      <div className="flex items-center justify-between mb-2 md:mb-4">
+        <div className="flex items-center gap-2 md:gap-3">
+          <div className={`p-1.5 md:p-2 rounded-xl ${mode === 'destroyer' ? 'bg-green-500 text-black' : 'bg-red-500 text-black'}`}>
+            {volume <= 0 ? <VolumeX className="w-4 h-4 md:w-6 md:h-6" /> : volume < 30 ? <Volume1 className="w-4 h-4 md:w-6 md:h-6" /> : <Volume2 className="w-4 h-4 md:w-6 md:h-6" />}
           </div>
+          <div className="font-black text-xs md:text-sm tracking-widest uppercase opacity-50">Volume</div>
         </div>
-        <div className="w-24 text-right font-black text-4xl italic tracking-tighter">
-          {volume}<span className="text-sm not-italic ml-1 opacity-50">%</span>
+        <div className="w-16 md:w-24 text-right font-black text-xl md:text-4xl italic tracking-tighter">
+          {Math.round(volume)}<span className="text-[10px] md:text-sm not-italic ml-0.5 md:ml-1 opacity-50">%</span>
         </div>
       </div>
-      
-      <div className="mt-4 flex justify-between items-center opacity-40 text-[8px] uppercase tracking-[0.2em]">
-        <span>System Audio Output</span>
-        <div className="flex gap-4">
-          <span>EVOLT: DESTROY EMERALD</span>
-          <span>RVOLT: DESTROY RUBY</span>
+      <div className="h-4 md:h-6 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
+        <div 
+          className={`h-full relative transition-all duration-200 ${mode === 'destroyer' ? 'bg-green-500' : 'bg-red-500'}`}
+          style={{ width: `${volume}%` }}
+        >
+          <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-white/20" />
         </div>
       </div>
     </div>
+  );
+});
+
+const GameHUD = React.memo(({ 
+  volumeRef, 
+  timerRef, 
+  destroyedAsteroidsRef, 
+  totalAsteroidsRef, 
+  tutorialGreenRef, 
+  tutorialRedRef,
+  mode,
+  gameMode,
+  levelTime,
+  tutorialStep,
+  volumeFlash,
+  isTutorialPaused,
+  setIsTutorialPaused,
+  setGameStarted,
+  audioRef
+}: {
+  volumeRef: React.MutableRefObject<number>,
+  timerRef: React.MutableRefObject<number>,
+  destroyedAsteroidsRef: React.MutableRefObject<number>,
+  totalAsteroidsRef: React.MutableRefObject<number>,
+  tutorialGreenRef: React.MutableRefObject<number>,
+  tutorialRedRef: React.MutableRefObject<number>,
+  mode: 'destroyer' | 'creator',
+  gameMode: 'infinite' | 'level' | 'tutorial',
+  levelTime: number,
+  tutorialStep: number,
+  volumeFlash: 'hit' | 'miss' | null,
+  isTutorialPaused: boolean,
+  setIsTutorialPaused: (v: boolean) => void,
+  setGameStarted: (v: boolean) => void,
+  audioRef: React.RefObject<HTMLAudioElement | null>
+}) => {
+  const [volume, setVolume] = useState(volumeRef.current);
+  const [timer, setTimer] = useState(timerRef.current);
+  const [destroyed, setDestroyed] = useState(destroyedAsteroidsRef.current);
+  const [total, setTotal] = useState(totalAsteroidsRef.current);
+  const [green, setGreen] = useState(tutorialGreenRef.current);
+  const [red, setRed] = useState(tutorialRedRef.current);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setVolume(volumeRef.current);
+      setTimer(timerRef.current);
+      setDestroyed(destroyedAsteroidsRef.current);
+      setTotal(totalAsteroidsRef.current);
+      setGreen(tutorialGreenRef.current);
+      setRed(tutorialRedRef.current);
+    }, 250);
+    return () => clearInterval(interval);
+  }, []);
+
+  const ratio = total > 0 ? destroyed / total : 0;
+
+  return (
+    <>
+      {gameMode === 'level' && (
+        <StarHUD totalAsteroids={total} destroyedAsteroids={destroyed} />
+      )}
+      
+      {gameMode === 'tutorial' && (
+        <div className="absolute top-0 left-0 right-0 z-30 flex items-start justify-center p-4 pointer-events-none">
+          <motion.div 
+            initial={{ y: -100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className={`w-full max-w-2xl bg-neutral-900/95 backdrop-blur-xl border-2 p-6 rounded-2xl text-center shadow-2xl pointer-events-auto ${
+              isTutorialPaused ? 'border-cyan-500' : 'border-cyan-500/20'
+            } transition-all duration-500`}
+          >
+            <div className="flex items-center justify-center gap-3 mb-2">
+              <Info className="w-6 h-6 text-cyan-400" />
+              <div className="text-left">
+                <h3 className="text-xl font-black text-cyan-400 tracking-tighter uppercase italic leading-none">
+                  {tutorialStep === 4 ? "TRAINING COMPLETE" : `Training: Step ${tutorialStep}`}
+                </h3>
+              </div>
+            </div>
+            
+            <p className="text-base font-bold text-white leading-tight mb-4 min-h-[3rem] flex items-center justify-center">
+              {tutorialStep === 0 && "PREPARING TRAINING SESSION..."}
+              {tutorialStep === 1 && `DESTROY 20 EMERALD ASTEROIDS. ONLY EMERALD TARGETS WILL SPAWN. PROGRESS: ${green}/20`}
+              {tutorialStep === 2 && `DESTROY 10 RUBY ASTEROIDS. ONLY RUBY TARGETS WILL SPAWN. PROGRESS: ${red}/10`}
+              {tutorialStep === 3 && `DODGE THE STARS FOR 20 SECONDS! MIXED ASTEROIDS ARE NOW APPEARING. TIME: ${Math.max(0, 20 - timer)}s`}
+              {tutorialStep === 4 && "YOU ROCK! SYSTEM CALIBRATION SUCCESSFUL."}
+            </p>
+
+            {isTutorialPaused ? (
+              <button 
+                onClick={() => {
+                  if (tutorialStep === 4) {
+                    setGameStarted(false);
+                    if (audioRef.current) audioRef.current.pause();
+                  } else {
+                    setIsTutorialPaused(false);
+                  }
+                }}
+                className="w-full bg-cyan-500 text-black py-3 rounded-xl font-black text-lg hover:bg-cyan-400 transition-all flex items-center justify-center gap-3 shadow-[0_0_20px_rgba(6,182,212,0.5)]"
+              >
+                {tutorialStep === 4 ? (
+                  <>FINISH <LogOut className="w-5 h-5" /></>
+                ) : (
+                  <><Play className="w-5 h-5 fill-current" /> START THIS STEP</>
+                )}
+              </button>
+            ) : (
+              <div className="flex flex-col items-center gap-1">
+                <div className="flex items-center justify-center gap-2 text-cyan-400 font-black italic text-xs">
+                  <RefreshCw className="w-3 h-3 animate-spin" /> ACTIVE TRAINING...
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4 h-1.5 bg-white/10 rounded-full overflow-hidden">
+              <motion.div 
+                className="h-full bg-cyan-400"
+                animate={{ 
+                  width: tutorialStep === 1 ? `${(green / 20) * 100}%` :
+                         tutorialStep === 2 ? `${(red / 10) * 100}%` :
+                         tutorialStep === 3 ? `${(timer / 20) * 100}%` :
+                         tutorialStep === 4 ? '100%' : '0%'
+                }}
+              />
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      <VolumeHUD volume={volume} mode={mode} volumeFlash={volumeFlash} />
+    </>
   );
 });
 
@@ -171,46 +293,62 @@ const StarHUD = React.memo(({ totalAsteroids, destroyedAsteroids }: { totalAster
 });
 
 export default function App() {
-  const [volume, setVolume] = useState(20);
   const [gameStarted, setGameStarted] = useState(false);
+  const gameStartedRef = useRef(gameStarted);
+  useEffect(() => { gameStartedRef.current = gameStarted; }, [gameStarted]);
+
   const [isPaused, setIsPaused] = useState(false);
+  const isPausedRef = useRef(isPaused);
+  useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
+
   const [isGameOver, setIsGameOver] = useState(false);
+  const isGameOverRef = useRef(isGameOver);
+  useEffect(() => { isGameOverRef.current = isGameOver; }, [isGameOver]);
   const [mode, setMode] = useState<'destroyer' | 'creator'>('destroyer');
   const [gameMode, setGameMode] = useState<'infinite' | 'level' | 'tutorial'>('infinite');
+  const gameModeRef = useRef(gameMode);
+  useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
   const aimerRef = useRef<HTMLDivElement>(null);
   const [volumeFlash, setVolumeFlash] = useState<'hit' | 'miss' | null>(null);
-  const [timer, setTimer] = useState(0);
   const [levelTime, setLevelTime] = useState(60);
   const [currentLevel, setCurrentLevel] = useState(1);
-  const [difficulty, setDifficulty] = useState(1);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userBadges, setUserBadges] = useState<string[]>([]);
   const [completedLevels, setCompletedLevels] = useState<number[]>([]);
   const [levelStars, setLevelStars] = useState<Record<number, number>>({});
-  const [totalAsteroids, setTotalAsteroids] = useState(0);
-  const [destroyedAsteroids, setDestroyedAsteroids] = useState(0);
   const [redDestroyed, setRedDestroyed] = useState(0);
+  const redDestroyedRef = useRef(redDestroyed);
+  useEffect(() => { redDestroyedRef.current = redDestroyed; }, [redDestroyed]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showBadges, setShowBadges] = useState(false);
   const [showTutorialPrompt, setShowTutorialPrompt] = useState(false);
   const [isStartingFromMenu, setIsStartingFromMenu] = useState(false);
-  const [tutorialStep, setTutorialStep] = useState(0);
-  const [isTutorialPaused, setIsTutorialPaused] = useState(false);
-  const [tutorialGreen, setTutorialGreen] = useState(0);
   const [isLevelMenuOpen, setIsLevelMenuOpen] = useState(false);
   const levelMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isPausedRef = useRef(isPaused);
-  useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
+
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const tutorialStepRef = useRef(tutorialStep);
+  useEffect(() => { tutorialStepRef.current = tutorialStep; }, [tutorialStep]);
+
+  const [isTutorialPaused, setIsTutorialPaused] = useState(false);
   const isTutorialPausedRef = useRef(isTutorialPaused);
   useEffect(() => { isTutorialPausedRef.current = isTutorialPaused; }, [isTutorialPaused]);
-  const isGameOverRef = useRef(isGameOver);
-  useEffect(() => { isGameOverRef.current = isGameOver; }, [isGameOver]);
-  const [tutorialRed, setTutorialRed] = useState(0);
-  const [tutorialBombs, setTutorialBombs] = useState(0);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [playerName, setPlayerName] = useState('');
   const [gameId, setGameId] = useState(0);
+  
+  // Refs for performance-critical state in game loop
+  const volumeRef = useRef(20);
+  const timerRef = useRef(0);
+  const destroyedAsteroidsRef = useRef(0);
+  const totalAsteroidsRef = useRef(0);
+  const tutorialGreenRef = useRef(0);
+  const tutorialRedRef = useRef(0);
+  const difficultyRef = useRef(1);
+  const modeRef = useRef(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const asteroidsRef = useRef<Asteroid[]>([]);
@@ -219,7 +357,6 @@ export default function App() {
   const lastSpawnRef = useRef(0);
   const requestRef = useRef<number>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const volumeRef = useRef(20);
   const timerIntervalRef = useRef<number | null>(null);
 
   // Auth & Progress listener
@@ -278,7 +415,7 @@ export default function App() {
 
   const completeLevel = async (level: number) => {
     // Calculate stars
-    const ratio = destroyedAsteroids / Math.max(1, totalAsteroids);
+    const ratio = destroyedAsteroidsRef.current / Math.max(1, totalAsteroidsRef.current);
     let stars = 0;
     if (ratio >= 0.75) stars = 3;
     else if (ratio >= 0.50) stars = 2;
@@ -288,7 +425,7 @@ export default function App() {
     setLevelStars(newStars);
 
     if (stars === 3) awardBadge('perfectionist');
-    if (destroyedAsteroids >= 50) awardBadge('sharpshooter');
+    if (destroyedAsteroidsRef.current >= 50) awardBadge('sharpshooter');
     awardBadge('bomb_dodger');
 
     const nextLevels = [...new Set([...completedLevels, level])];
@@ -310,13 +447,19 @@ export default function App() {
 
   // Leaderboard listener
   useEffect(() => {
+    if (!user) {
+      setLeaderboard([]);
+      return;
+    }
     const q = query(collection(db, 'leaderboard'), orderBy('score', 'desc'), limit(10));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const entries = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LeaderboardEntry));
       setLeaderboard(entries);
+    }, (error) => {
+      console.error("Leaderboard listener error:", error);
     });
     return () => unsubscribe();
-  }, []);
+  }, [user]);
 
   const handleLogin = async () => {
     try {
@@ -336,7 +479,7 @@ export default function App() {
       const nameToSave = playerName.trim();
       await addDoc(collection(db, 'leaderboard'), {
         name: nameToSave,
-        score: timer,
+        score: timerRef.current,
         timestamp: serverTimestamp(),
         uid: user.uid
       });
@@ -392,7 +535,7 @@ export default function App() {
     if (!audioRef.current) {
       const audio = new Audio(url);
       audio.loop = true;
-      audio.volume = volume / 100;
+      audio.volume = volumeRef.current / 100;
       audioRef.current = audio;
       
       const playOnInteract = () => {
@@ -410,13 +553,6 @@ export default function App() {
       }
     }
   }, [getSongUrl, gameId]);
-
-  // Sync volume
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = volume / 100;
-    }
-  }, [volume]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -439,19 +575,6 @@ export default function App() {
     }
   }, [isPaused, gameStarted, isGameOver]);
 
-  // Sync volume with audio
-  useEffect(() => {
-    volumeRef.current = volume;
-    if (audioRef.current) {
-      audioRef.current.volume = volume / 100;
-      if (volume <= 0 && gameStarted && !isGameOver && gameMode !== 'tutorial') {
-        setIsGameOver(true);
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
-    }
-  }, [volume, gameStarted, isGameOver, gameMode]);
-
   const spawnAsteroid = useCallback(() => {
     const side = Math.floor(Math.random() * 4);
     let x = 0, y = 0;
@@ -469,17 +592,17 @@ export default function App() {
     let isBomb = false;
     let isNegative = false;
 
-    if (gameMode === 'tutorial') {
-      if (tutorialStep === 0) return undefined; // Don't spawn during preparation
+    if (gameModeRef.current === 'tutorial') {
+      if (tutorialStepRef.current === 0) return undefined; // Don't spawn during preparation
       
       // Force correct asteroid type based on step
-      if (tutorialStep === 1) {
+      if (tutorialStepRef.current === 1) {
         isBomb = false;
         isNegative = false; // Emerald
-      } else if (tutorialStep === 2) {
+      } else if (tutorialStepRef.current === 2) {
         isBomb = false;
         isNegative = true; // Ruby
-      } else if (tutorialStep === 3) {
+      } else if (tutorialStepRef.current === 3) {
         // Dodge stars for 20s - mixed asteroids + bombs
         isBomb = Math.random() < 0.25;
         isNegative = !isBomb && Math.random() < 0.4;
@@ -488,15 +611,15 @@ export default function App() {
         isNegative = !isBomb && Math.random() < 0.3;
       }
       // Double check for Step 2
-      if (tutorialStep === 2) {
+      if (tutorialStepRef.current === 2) {
         isBomb = false;
         isNegative = true;
       }
     } else {
       const baseBombChance = 0.08;
       const baseNegativeChance = 0.2;
-      const levelScaling = gameMode === 'level' ? (currentLevel - 1) * 0.02 : 0;
-      const infiniteScaling = gameMode === 'infinite' ? (difficulty - 1) * 0.02 : 0;
+      const levelScaling = gameModeRef.current === 'level' ? (currentLevel - 1) * 0.02 : 0;
+      const infiniteScaling = gameModeRef.current === 'infinite' ? (difficultyRef.current - 1) * 0.02 : 0;
       
       const bombChance = baseBombChance + levelScaling + infiniteScaling;
       isBomb = Math.random() < Math.min(0.3, bombChance);
@@ -506,7 +629,8 @@ export default function App() {
     }
 
     const baseSpeed = 2 + Math.random() * 4;
-    const speedMultiplier = gameMode === 'infinite' ? difficulty : (1 + (currentLevel - 1) * 0.2);
+    const speedMultiplier = gameModeRef.current === 'infinite' ? difficultyRef.current : (1 + (currentLevel - 1) * 0.2);
+    const speed = (isBomb ? 6 : baseSpeed) * speedMultiplier;
 
     const vertices: { x: number; y: number }[] = [];
     const sides = 6;
@@ -516,14 +640,16 @@ export default function App() {
       vertices.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
     }
 
-    setTotalAsteroids(prev => prev + 1);
+    totalAsteroidsRef.current += 1;
 
     return {
       id: Math.random(),
       x,
       y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
       size: isBomb ? 100 : 60 + Math.random() * 80,
-      speed: (isBomb ? 6 : baseSpeed) * speedMultiplier,
+      speed,
       angle,
       rotation: Math.random() * 360,
       rotationSpeed: (Math.random() - 0.5) * 10,
@@ -531,13 +657,18 @@ export default function App() {
       isNegative,
       vertices
     };
-  }, [gameMode, difficulty, currentLevel, tutorialStep]);
+  }, [currentLevel]);
 
   const createParticles = (x: number, y: number, color: string, count: number = 1) => {
     // Performance: Limit total particles
-    if (particlesRef.current.length > 30) {
-      particlesRef.current = particlesRef.current.slice(-30);
+    if (particlesRef.current.length > 40) {
+      particlesRef.current = particlesRef.current.slice(-40);
     }
+    
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 0.5 + Math.random() * 1.5;
@@ -548,7 +679,7 @@ export default function App() {
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         life: 1,
-        color
+        r, g, b
       });
     }
   };
@@ -587,77 +718,115 @@ export default function App() {
     ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
     // Draw grid from off-screen canvas
-    ctx.drawImage(mode === 'destroyer' ? gridCanvases.destroyer : gridCanvases.creator, 0, 0);
+    ctx.drawImage(modeRef.current === 'destroyer' ? gridCanvases.destroyer : gridCanvases.creator, 0, 0);
 
-    // Draw Asteroids - Grouped by type to minimize state changes
-    const emeralds: Asteroid[] = [];
-    const rubies: Asteroid[] = [];
-    const bombs: Asteroid[] = [];
+    // Pre-calculate color strings
+    const EMERALD_COLOR = '#22c55e';
+    const EMERALD_FILL = '#22c55e33';
+    const RUBY_COLOR = '#ef4444';
+    const RUBY_FILL = '#ef444433';
+    const BOMB_COLOR = '#ffffff';
+    const BOMB_FILL = '#ffffff33';
 
-    asteroidsRef.current.forEach(ast => {
-      if (ast.isBomb) bombs.push(ast);
-      else if (ast.isNegative) rubies.push(ast);
-      else emeralds.push(ast);
-    });
+    // Draw Asteroids - Optimized by iterating once and using multiple passes for styles
+    const drawAsteroids = (type: 'emerald' | 'ruby' | 'bomb') => {
+      let color = '';
+      let fillStyle = '';
+      let isBomb = false;
+      
+      if (type === 'emerald') {
+        color = EMERALD_COLOR;
+        fillStyle = EMERALD_FILL;
+      } else if (type === 'ruby') {
+        color = RUBY_COLOR;
+        fillStyle = RUBY_FILL;
+      } else {
+        color = BOMB_COLOR;
+        fillStyle = BOMB_FILL;
+        isBomb = true;
+      }
 
-    const drawAsteroidGroup = (group: Asteroid[], color: string, isBomb: boolean) => {
-      if (group.length === 0) return;
       ctx.strokeStyle = color;
       ctx.lineWidth = 3;
-      ctx.fillStyle = `${color}33`;
+      ctx.fillStyle = fillStyle;
 
-      group.forEach(ast => {
+      const asteroids = asteroidsRef.current;
+      const len = asteroids.length;
+      
+      for (let i = 0; i < len; i++) {
+        const ast = asteroids[i];
+        
+        // Inline type check for speed
+        if (type === 'bomb') {
+          if (!ast.isBomb) continue;
+        } else if (type === 'ruby') {
+          if (!ast.isNegative || ast.isBomb) continue;
+        } else {
+          if (ast.isNegative || ast.isBomb) continue;
+        }
+
         const angle = (ast.rotation * Math.PI) / 180;
         const cos = Math.cos(angle);
         const sin = Math.sin(angle);
         ctx.setTransform(cos, sin, -sin, cos, ast.x, ast.y);
         
         if (isBomb) {
+          const radius = ast.size / 2;
           ctx.beginPath();
-          ctx.arc(0, 0, ast.size / 2, 0, Math.PI * 2);
+          ctx.arc(0, 0, radius, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
           ctx.fillStyle = '#ffffff';
           ctx.beginPath();
-          ctx.arc(0, 0, ast.size / 4, 0, Math.PI * 2);
+          ctx.arc(0, 0, radius / 2, 0, Math.PI * 2);
           ctx.fill();
+          ctx.fillStyle = fillStyle; // Restore for next bomb
         } else {
           ctx.beginPath();
-          ast.vertices.forEach((v, i) => {
-            if (i === 0) ctx.moveTo(v.x, v.y);
+          const vertices = ast.vertices;
+          const vLen = vertices.length;
+          for (let j = 0; j < vLen; j++) {
+            const v = vertices[j];
+            if (j === 0) ctx.moveTo(v.x, v.y);
             else ctx.lineTo(v.x, v.y);
-          });
+          }
           ctx.closePath();
           ctx.stroke();
           ctx.fill();
         }
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-      });
+      }
     };
 
-    drawAsteroidGroup(emeralds, '#22c55e', false);
-    drawAsteroidGroup(rubies, '#ef4444', false);
-    drawAsteroidGroup(bombs, '#ffffff', true);
+    drawAsteroids('emerald');
+    drawAsteroids('ruby');
+    drawAsteroids('bomb');
 
-    // Draw Particles - Optimized with rgba to avoid globalAlpha changes
-    particlesRef.current.forEach(p => {
-      // Convert hex to rgba for alpha support without globalAlpha
-      const r = parseInt(p.color.slice(1, 3), 16);
-      const g = parseInt(p.color.slice(3, 5), 16);
-      const b = parseInt(p.color.slice(5, 7), 16);
-      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${p.life})`;
+    // Draw Particles - Optimized with for loop
+    const particles = particlesRef.current;
+    const pLen = particles.length;
+    for (let i = 0; i < pLen; i++) {
+      const p = particles[i];
+      ctx.fillStyle = `rgba(${p.r}, ${p.g}, ${p.b}, ${p.life})`;
       ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
-    });
+    }
 
-    // Draw Explosions
-    explosionsRef.current.forEach(exp => {
+    // Draw Explosions - Optimized with for loop and pre-calculated colors
+    const explosions = explosionsRef.current;
+    const eLen = explosions.length;
+    const destroyerExplosionColor = 'rgba(34, 197, 94, ';
+    const creatorExplosionColor = 'rgba(239, 68, 68, ';
+    const baseExplosionColor = modeRef.current === 'destroyer' ? destroyerExplosionColor : creatorExplosionColor;
+
+    for (let i = 0; i < eLen; i++) {
+      const exp = explosions[i];
       ctx.beginPath();
       ctx.arc(exp.x, exp.y, (1 - exp.life) * 150, 0, Math.PI * 2);
-      ctx.strokeStyle = mode === 'destroyer' ? `rgba(34, 197, 94, ${exp.life})` : `rgba(239, 68, 68, ${exp.life})`;
+      ctx.strokeStyle = baseExplosionColor + exp.life + ')';
       ctx.lineWidth = 8;
       ctx.stroke();
-    });
-  }, [mode]);
+    }
+  }, [gridCanvases]);
 
   const updateGame = useCallback((time: number) => {
     if (!gameStarted || isPaused || isGameOver || isTutorialPaused) return;
@@ -666,9 +835,9 @@ export default function App() {
     if (!ctx) return;
 
     // Spawn new asteroids with difficulty scaling
-    const baseInterval = gameMode === 'tutorial' ? 2000 : 1200;
-    const levelInterval = gameMode === 'level' ? Math.max(500, baseInterval - (currentLevel - 1) * 80) : baseInterval;
-    const infiniteInterval = gameMode === 'infinite' ? Math.max(400, baseInterval - (difficulty - 1) * 100) : baseInterval;
+    const baseInterval = gameModeRef.current === 'tutorial' ? 2000 : 1200;
+    const levelInterval = gameModeRef.current === 'level' ? Math.max(500, baseInterval - (currentLevel - 1) * 80) : baseInterval;
+    const infiniteInterval = gameModeRef.current === 'infinite' ? Math.max(400, baseInterval - (difficultyRef.current - 1) * 100) : baseInterval;
     const spawnInterval = Math.min(levelInterval, infiniteInterval);
     
     if (time - lastSpawnRef.current > spawnInterval) {
@@ -682,42 +851,40 @@ export default function App() {
     }
 
     // Difficulty scaling in infinite mode
-    if (gameMode === 'infinite') {
-      const newDifficulty = 1 + Math.floor(timer / 15) * 0.1;
-      if (newDifficulty !== difficulty) {
-        setDifficulty(newDifficulty);
-      }
-      if (timer >= 300) awardBadge('infinite_5');
-      if (timer >= 600) awardBadge('infinite_10');
-      if (timer >= 1500) awardBadge('infinite_25');
+    if (gameModeRef.current === 'infinite') {
+      const newDifficulty = 1 + Math.floor(timerRef.current / 15) * 0.1;
+      difficultyRef.current = newDifficulty;
+      if (timerRef.current >= 300) awardBadge('infinite_5');
+      if (timerRef.current >= 600) awardBadge('infinite_10');
+      if (timerRef.current >= 1500) awardBadge('infinite_25');
     }
 
     // Level mode completion
-    if (gameMode === 'level' && timer >= levelTime) {
+    if (gameModeRef.current === 'level' && timerRef.current >= levelTime) {
       setIsGameOver(true);
       completeLevel(currentLevel);
       if (audioRef.current) audioRef.current.pause();
     }
 
     // Tutorial logic
-    if (gameMode === 'tutorial') {
+    if (gameModeRef.current === 'tutorial') {
       // Tutorial completion
-      if (tutorialStep === 3 && timer >= 20) {
+      if (tutorialStepRef.current === 3 && timerRef.current >= 20) {
         setTutorialStep(4);
         setIsTutorialPaused(true);
         awardBadge('tutorial_complete');
       }
       
       // Tutorial step transitions
-      if (tutorialGreen >= 20 && tutorialStep === 1) {
+      if (tutorialGreenRef.current >= 20 && tutorialStepRef.current === 1) {
         setTutorialStep(2);
         setIsTutorialPaused(true);
-        setTimer(0); // Reset timer for next step
+        timerRef.current = 0;
         asteroidsRef.current = []; // Clear asteroids
-      } else if (tutorialRed >= 10 && tutorialStep === 2) {
+      } else if (tutorialRedRef.current >= 10 && tutorialStepRef.current === 2) {
         setTutorialStep(3);
         setIsTutorialPaused(true);
-        setTimer(0); // Reset timer for dodge step
+        timerRef.current = 0;
         asteroidsRef.current = []; // Clear asteroids
       }
     }
@@ -725,21 +892,17 @@ export default function App() {
     // Move asteroids
     let escapedCount = 0;
     asteroidsRef.current = asteroidsRef.current.filter(ast => {
-      ast.x += Math.cos(ast.angle) * ast.speed;
-      ast.y += Math.sin(ast.angle) * ast.speed;
+      ast.x += ast.vx;
+      ast.y += ast.vy;
       ast.rotation += ast.rotationSpeed;
 
       const isOut = ast.x < -200 || ast.x > GAME_WIDTH + 200 || 
                    ast.y < -200 || ast.y > GAME_HEIGHT + 200;
       
       if (isOut) {
-        if (ast.isBomb) {
-          if (gameMode === 'tutorial' && tutorialStep === 3) {
-            setTutorialBombs(prev => prev + 1);
-          }
-        } else {
+        if (!ast.isBomb) {
           // In destroyer mode, green escaping is bad. In creator mode, red escaping is bad.
-          const isBadEscape = (mode === 'destroyer' && !ast.isNegative) || (mode === 'creator' && ast.isNegative);
+          const isBadEscape = (modeRef.current === 'destroyer' && !ast.isNegative) || (modeRef.current === 'creator' && ast.isNegative);
           if (isBadEscape) escapedCount++;
         }
       }
@@ -752,8 +915,8 @@ export default function App() {
     }
 
     // Update particles - Limit count for performance
-    if (particlesRef.current.length > 20) {
-      particlesRef.current = particlesRef.current.slice(-20);
+    if (particlesRef.current.length > 40) {
+      particlesRef.current = particlesRef.current.slice(-40);
     }
     particlesRef.current = particlesRef.current.filter(p => {
       p.x += p.vx;
@@ -768,30 +931,26 @@ export default function App() {
       return exp.life > 0;
     });
 
+    // Sync audio volume and handle game over
+    if (audioRef.current) {
+      audioRef.current.volume = volumeRef.current / 100;
+      if (volumeRef.current <= 0 && gameStarted && !isGameOver && gameModeRef.current !== 'tutorial') {
+        setIsGameOver(true);
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+    }
+
     // Impossible to lose in tutorial
-    if (gameMode === 'tutorial' && volumeRef.current <= 0) {
+    if (gameModeRef.current === 'tutorial' && volumeRef.current <= 0) {
       volumeRef.current = 20;
-      setTimer(t => Math.max(0, t - 5)); // Revert time a little
+      timerRef.current = Math.max(0, timerRef.current - 5);
       triggerFlash('miss');
     }
 
-    // Sync volume to state for HUD (once per frame)
-    // Removed setVolume(volumeRef.current) from here to avoid re-rendering App every frame
-
     draw(ctx);
     requestRef.current = requestAnimationFrame(updateGame);
-  }, [gameStarted, isPaused, isGameOver, isTutorialPaused, spawnAsteroid, draw, gameMode, gridCanvases, tutorialStep, tutorialGreen, tutorialRed, timer]);
-
-  // Sync volume to state for HUD at a lower frequency to prevent lag
-  useEffect(() => {
-    if (!gameStarted || isGameOver) return;
-    const interval = setInterval(() => {
-      if (volumeRef.current !== volume) {
-        setVolume(volumeRef.current);
-      }
-    }, 100); // 10 FPS for HUD is plenty
-    return () => clearInterval(interval);
-  }, [gameStarted, isGameOver, volume]);
+  }, [gameStarted, isPaused, isGameOver, isTutorialPaused, spawnAsteroid, draw, gridCanvases, currentLevel, levelTime]);
 
   useEffect(() => {
     // The loop is started by updateGame calling itself via requestAnimationFrame.
@@ -809,8 +968,8 @@ export default function App() {
     };
   }, [gameStarted, isPaused, isGameOver, isTutorialPaused, updateGame]);
 
-  const handleShoot = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!gameStarted || isPaused || isGameOver || isTutorialPaused) return;
+  const handleShoot = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    if (!gameStartedRef.current || isPausedRef.current || isGameOverRef.current || isTutorialPausedRef.current) return;
 
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -829,42 +988,45 @@ export default function App() {
     let hitWrongColor = false;
     
     const nextAsteroids = asteroidsRef.current.filter(ast => {
-      const dist = Math.sqrt((ast.x - x) ** 2 + (ast.y - y) ** 2);
-      if (dist < ast.size / 2 + 40) {
+      const dx = ast.x - x;
+      const dy = ast.y - y;
+      const distSq = dx * dx + dy * dy;
+      const radius = ast.size / 2 + 40;
+      
+      if (distSq < radius * radius) {
         if (ast.isBomb) {
           hit = true;
           hitBomb = true;
           explosionsRef.current.push({ id: Math.random(), x: ast.x, y: ast.y, life: 1 });
-          createParticles(ast.x, ast.y, '#ffffff');
+          createParticles(ast.x, ast.y, '#ffffff', 10);
           return false;
         }
         
         // Check if mode matches asteroid color
-        const isCorrectMode = (mode === 'destroyer' && !ast.isNegative) || (mode === 'creator' && ast.isNegative);
+        const isCorrectMode = (modeRef.current === 'destroyer' && !ast.isNegative) || (modeRef.current === 'creator' && ast.isNegative);
         
         if (isCorrectMode) {
           hit = true;
-          setDestroyedAsteroids(prev => prev + 1);
-          if (gameMode === 'tutorial') {
-            if (ast.isNegative) setTutorialRed(prev => prev + 1);
-            else setTutorialGreen(prev => prev + 1);
+          destroyedAsteroidsRef.current += 1;
+          if (gameModeRef.current === 'tutorial') {
+            if (ast.isNegative) {
+              tutorialRedRef.current += 1;
+            } else {
+              tutorialGreenRef.current += 1;
+            }
           }
           if (ast.isNegative) {
-            setRedDestroyed(prev => {
-              const next = prev + 1;
-              if (next >= 100) awardBadge('creator_master');
-              return next;
-            });
+            redDestroyedRef.current += 1;
+            if (redDestroyedRef.current >= 100) awardBadge('creator_master');
           }
           explosionsRef.current.push({ id: Math.random(), x: ast.x, y: ast.y, life: 1 });
-          createParticles(ast.x, ast.y, ast.isNegative ? '#ef4444' : '#22c55e');
+          createParticles(ast.x, ast.y, ast.isNegative ? '#ef4444' : '#22c55e', 8);
           return false;
         } else {
           hitWrongColor = true;
           volumeRef.current = Math.max(0, volumeRef.current - 5);
-          setVolume(volumeRef.current);
           explosionsRef.current.push({ id: Math.random(), x: ast.x, y: ast.y, life: 1 });
-          createParticles(ast.x, ast.y, '#ffffff');
+          createParticles(ast.x, ast.y, '#ffffff', 5);
           return false; // Destroy asteroid
         }
       }
@@ -874,18 +1036,19 @@ export default function App() {
 
     if (hit) {
       if (hitBomb) {
-        if (gameMode === 'tutorial') {
+        if (gameModeRef.current === 'tutorial') {
           volumeRef.current = Math.max(5, volumeRef.current - 15);
-          setTimer(t => Math.max(0, t - 3)); // Revert time
+          timerRef.current = Math.max(0, timerRef.current - 3);
           triggerFlash('miss');
         } else {
           volumeRef.current = 0;
           setIsGameOver(true);
+          isGameOverRef.current = true;
           if (audioRef.current) audioRef.current.pause();
           triggerFlash('miss');
         }
       } else {
-        const gain = mode === 'creator' ? 10 : 8;
+        const gain = modeRef.current === 'creator' ? 10 : 8;
         volumeRef.current = Math.min(MAX_VOLUME, volumeRef.current + gain);
         if (volumeRef.current >= 100) awardBadge('volume_max');
         triggerFlash('hit');
@@ -896,37 +1059,43 @@ export default function App() {
       volumeRef.current = Math.max(0, volumeRef.current - penalty);
       triggerFlash('miss');
     }
-  };
+  }, [createParticles, awardBadge]);
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect || !aimerRef.current) return;
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     aimerRef.current.style.left = `${x}px`;
     aimerRef.current.style.top = `${y}px`;
-  };
+  }, []);
 
   const startGame = (isTutorial = false) => {
     console.log('startGame called:', { isTutorial, gameMode, tutorialStep });
     setGameId(prev => prev + 1);
     setGameStarted(true);
     setIsPaused(false);
+    isPausedRef.current = false;
     setIsGameOver(false);
+    isGameOverRef.current = false;
     setIsTutorialPaused(isTutorial);
-    if (isTutorial) setGameMode('tutorial');
-    else if (gameMode === 'tutorial') setGameMode('infinite');
-    setVolume(20);
+    isTutorialPausedRef.current = isTutorial;
+    if (isTutorial) {
+      setGameMode('tutorial');
+      setTutorialStep(1);
+      tutorialStepRef.current = 1;
+    } else {
+      if (gameMode === 'tutorial') setGameMode('infinite');
+      setTutorialStep(4);
+      tutorialStepRef.current = 4;
+    }
     volumeRef.current = 20;
-    setTimer(0);
-    setDifficulty(1);
-    setTotalAsteroids(0);
-    setDestroyedAsteroids(0);
-    if (isTutorial) setTutorialStep(0);
-    else setTutorialStep(4);
-    setTutorialGreen(0);
-    setTutorialRed(0);
-    setTutorialBombs(0);
+    timerRef.current = 0;
+    difficultyRef.current = 1;
+    totalAsteroidsRef.current = 0;
+    destroyedAsteroidsRef.current = 0;
+    tutorialGreenRef.current = 0;
+    tutorialRedRef.current = 0;
     awardBadge('first_contact');
     asteroidsRef.current = [];
     particlesRef.current = [];
@@ -960,7 +1129,7 @@ export default function App() {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = window.setInterval(() => {
         if (!isPausedRef.current && !isTutorialPausedRef.current && !isGameOverRef.current) {
-          setTimer(t => t + 1);
+          timerRef.current += 1;
         }
       }, 1000);
     }
@@ -975,45 +1144,33 @@ export default function App() {
     }
   };
 
-  const VolumeIcon = () => {
-    if (volume === 0) return <VolumeX className={`w-8 h-8 ${mode === 'destroyer' ? 'text-red-500' : 'text-red-400'}`} />;
-    if (volume < 33) return <Volume className={`w-8 h-8 ${mode === 'destroyer' ? 'text-yellow-500' : 'text-yellow-400'}`} />;
-    if (volume < 66) return <Volume1 className={`w-8 h-8 ${mode === 'destroyer' ? 'text-green-400' : 'text-green-300'}`} />;
-    return <Volume2 className={`w-8 h-8 ${mode === 'destroyer' ? 'text-green-500' : 'text-green-400'}`} />;
-  };
-
   return (
     <div className={`fixed inset-0 flex flex-col items-center justify-between p-4 font-mono transition-colors duration-500 overflow-hidden ${
       mode === 'destroyer' ? 'bg-neutral-950 text-green-500' : 'bg-neutral-900 text-red-500'
     }`}>
       {/* Header */}
-      <div className="w-full flex justify-between items-center px-4 pt-2">
+      <div className="w-full flex justify-between items-center px-2 md:px-4 pt-2">
         <div className="flex flex-col">
-          <h1 className="text-2xl font-black tracking-tighter flex items-center gap-2">
-            <Zap className={`w-6 h-6 ${mode === 'destroyer' ? 'fill-green-500' : 'fill-red-500'}`} />
-            {mode === 'destroyer' ? 'Emerald Laser' : 'Ruby Laser'}
+          <h1 className="text-lg md:text-2xl font-black tracking-tighter flex items-center gap-1 md:gap-2">
+            <Zap className={`w-4 h-4 md:w-6 md:h-6 ${mode === 'destroyer' ? 'fill-green-500' : 'fill-red-500'}`} />
+            <span className="hidden sm:inline">{mode === 'destroyer' ? 'Emerald Laser' : 'Ruby Laser'}</span>
+            <span className="sm:hidden">{mode === 'destroyer' ? 'EMERALD' : 'RUBY'}</span>
           </h1>
-          <div className="flex items-center gap-4">
-            <p className="text-[8px] opacity-70 uppercase tracking-widest">
-              {mode === 'destroyer' ? 'SHOOT EMERALD TO INCREASE | AVOID STARS' : 'SHOOT RUBY TO INCREASE | RVOLT MODE'}
+          <div className="flex items-center gap-2 md:gap-4">
+            <p className="text-[6px] md:text-[8px] opacity-70 uppercase tracking-widest hidden xs:block">
+              {mode === 'destroyer' ? 'SHOOT EMERALD | AVOID STARS' : 'SHOOT RUBY | RVOLT MODE'}
             </p>
-            <div className="flex items-center gap-2 bg-black/40 px-2 py-1 rounded border border-white/10">
-              <Clock className="w-3 h-3" />
-              <span className="text-[10px] font-bold">
-                {gameMode === 'level' ? `${Math.max(0, levelTime - timer)}s` : `${timer}s`}
-              </span>
-            </div>
           </div>
         </div>
 
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-1 md:gap-2 items-center">
           {/* Badges Button */}
           <button 
             onClick={() => setShowBadges(true)}
-            className="p-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-all border border-white/10"
+            className="p-1.5 md:p-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-all border border-white/10"
             title="Badges"
           >
-            <Award className="w-4 h-4 text-yellow-500" />
+            <Award className="w-3 h-3 md:w-4 md:h-4 text-yellow-500" />
           </button>
 
           {/* Help Button */}
@@ -1022,34 +1179,22 @@ export default function App() {
               setIsStartingFromMenu(false);
               setShowTutorialPrompt(true);
             }}
-            className="p-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-all border border-white/10"
+            className="p-1.5 md:p-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-all border border-white/10"
             title="Help"
           >
-            <HelpCircle className="w-4 h-4 text-cyan-400" />
+            <HelpCircle className="w-3 h-3 md:w-4 md:h-4 text-cyan-400" />
           </button>
-
-          {/* Donate Button */}
-          <a 
-            href="https://ko-fi.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="p-2 bg-neutral-800 hover:bg-pink-900/30 rounded-lg transition-all border border-white/10 flex items-center gap-2 group"
-            title="Support the Developer"
-          >
-            <Heart className="w-4 h-4 text-pink-500 group-hover:scale-110 transition-transform" />
-            <span className="text-[10px] font-bold text-pink-400 hidden sm:inline">DONATE</span>
-          </a>
 
           {/* Game Mode Toggle */}
           {!gameStarted && (
-            <div className="flex bg-neutral-800 rounded-lg p-1 mr-4">
+            <div className="flex bg-neutral-800 rounded-lg p-0.5 md:p-1 mr-1 md:mr-4">
               <button 
                 onClick={() => setGameMode('infinite')}
-                className={`px-3 py-1 rounded-md flex items-center gap-2 text-[10px] font-bold transition-all ${
+                className={`px-2 md:px-3 py-1 rounded-md flex items-center gap-1 md:gap-2 text-[8px] md:text-[10px] font-bold transition-all ${
                   gameMode === 'infinite' ? 'bg-neutral-700 text-white shadow-inner' : 'text-white/40 hover:text-white/60'
                 }`}
               >
-                <Infinity className="w-3 h-3" /> INFINITE
+                <Infinity className="w-2 h-2 md:w-3 md:h-3" /> <span className="hidden xs:inline">INFINITE</span>
               </button>
               <div 
                 className="relative"
@@ -1065,15 +1210,15 @@ export default function App() {
               >
                 <button 
                   onClick={() => setGameMode('level')}
-                  className={`px-3 py-1 rounded-md flex items-center gap-2 text-[10px] font-bold transition-all ${
+                  className={`px-2 md:px-3 py-1 rounded-md flex items-center gap-1 md:gap-2 text-[8px] md:text-[10px] font-bold transition-all ${
                     gameMode === 'level' ? 'bg-neutral-700 text-white shadow-inner' : 'text-white/40 hover:text-white/60'
                   }`}
                 >
-                  <Trophy className="w-3 h-3" /> LEVEL {currentLevel}
+                  <Trophy className="w-2 h-2 md:w-3 md:h-3" /> <span className="hidden xs:inline">LEVEL</span> {currentLevel}
                 </button>
                 {/* Level Selector Dropdown */}
                 {!gameStarted && (
-                  <div className={`absolute top-full left-0 mt-2 ${isLevelMenuOpen ? 'grid' : 'hidden'} grid-cols-5 gap-1 bg-neutral-900 p-2 rounded-xl border border-white/10 z-50 w-48 shadow-2xl`}>
+                  <div className={`absolute top-full right-0 md:left-0 mt-2 ${isLevelMenuOpen ? 'grid' : 'hidden'} grid-cols-5 gap-1 bg-neutral-900 p-2 rounded-xl border border-white/10 z-50 w-40 md:w-48 shadow-2xl`}>
                     {[...Array(10)].map((_, i) => {
                       const levelNum = i + 1;
                       const isUnlocked = levelNum === 1 || completedLevels.includes(i);
@@ -1087,7 +1232,7 @@ export default function App() {
                             setCurrentLevel(levelNum);
                             setGameMode('level');
                           }}
-                          className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center text-[10px] font-bold transition-all relative ${
+                          className={`w-7 h-7 md:w-10 md:h-10 rounded-lg flex flex-col items-center justify-center text-[8px] md:text-[10px] font-bold transition-all relative ${
                             currentLevel === levelNum ? 'bg-green-500 text-black' : 
                             isCompleted ? 'bg-green-900/40 text-green-400 border border-green-500/20' :
                             isUnlocked ? 'bg-neutral-800 text-white hover:bg-neutral-700' :
@@ -1099,7 +1244,7 @@ export default function App() {
                           {isCompleted && levelStars[levelNum] > 0 && (
                             <div className="flex gap-0.5 mt-0.5">
                               {[...Array(levelStars[levelNum])].map((_, s) => (
-                                <Star key={s} className="w-1.5 h-1.5 fill-current" />
+                                <Star key={s} className="w-1 md:w-1.5 h-1 md:h-1.5 fill-current" />
                               ))}
                             </div>
                           )}
@@ -1114,7 +1259,7 @@ export default function App() {
 
           {/* Auth Button */}
           {user && !gameStarted && (
-            <div className="flex items-center gap-2 bg-neutral-800 px-2 py-1 rounded-lg border border-white/10">
+            <div className="hidden sm:flex items-center gap-2 bg-neutral-800 px-2 py-1 rounded-lg border border-white/10">
               <User className="w-3 h-3 text-white/40" />
               <input 
                 type="text" 
@@ -1132,39 +1277,41 @@ export default function App() {
                   }
                 }}
                 placeholder="Username"
-                className="bg-transparent border-none outline-none text-white text-[10px] font-bold w-20"
+                className="bg-transparent border-none outline-none text-white text-[10px] font-bold w-16 md:w-20"
                 maxLength={20}
               />
             </div>
           )}
           <button 
             onClick={user ? handleLogout : handleLogin}
-            className={`flex items-center gap-2 px-3 py-1 border-2 text-[10px] font-bold transition-all rounded-lg ${
+            className={`flex items-center gap-1 md:gap-2 px-2 md:px-3 py-1 border-2 text-[8px] md:text-[10px] font-bold transition-all rounded-lg ${
               user ? 'border-white/20 text-white/60 hover:text-white hover:border-white/40' : 'bg-white text-black border-white hover:bg-white/90'
             }`}
           >
-            {user ? <LogOut className="w-3 h-3" /> : <LogIn className="w-3 h-3" />}
-            {user ? 'LOGOUT' : 'LOGIN'}
+            {user ? <LogOut className="w-2 h-2 md:w-3 md:h-3" /> : <LogIn className="w-2 h-2 md:w-3 md:h-3" />}
+            <span className="hidden xs:inline">{user ? 'LOGOUT' : 'LOGIN'}</span>
           </button>
 
-          <div className="w-px h-6 bg-white/10 mx-2" />
+          <div className="hidden xs:block w-px h-6 bg-white/10 mx-1 md:mx-2" />
 
-          <button 
-            onClick={() => setMode('destroyer')}
-            className={`px-3 py-1 border-2 text-[10px] font-bold transition-all flex items-center gap-2 ${
-              mode === 'destroyer' ? 'bg-green-500 text-black border-green-500' : 'border-green-500/30 text-green-500/50'
-            }`}
-          >
-            <span className="opacity-50">[1]</span> EVOLT
-          </button>
-          <button 
-            onClick={() => setMode('creator')}
-            className={`px-3 py-1 border-2 text-[10px] font-bold transition-all flex items-center gap-2 ${
-              mode === 'creator' ? 'bg-red-500 text-black border-red-500' : 'border-red-500/30 text-red-500/50'
-            }`}
-          >
-            <span className="opacity-50">[2]</span> RVOLT
-          </button>
+          <div className="hidden md:flex gap-2">
+            <button 
+              onClick={() => setMode('destroyer')}
+              className={`px-3 py-1 border-2 text-[10px] font-bold transition-all flex items-center gap-2 ${
+                mode === 'destroyer' ? 'bg-green-500 text-black border-green-500' : 'border-green-500/30 text-green-500/50'
+              }`}
+            >
+              <span className="opacity-50">[1]</span> EVOLT
+            </button>
+            <button 
+              onClick={() => setMode('creator')}
+              className={`px-3 py-1 border-2 text-[10px] font-bold transition-all flex items-center gap-2 ${
+                mode === 'creator' ? 'bg-red-500 text-black border-red-500' : 'border-red-500/30 text-red-500/50'
+              }`}
+            >
+              <span className="opacity-50">[2]</span> RVOLT
+            </button>
+          </div>
           {gameStarted && !isGameOver && (
             <button 
               onClick={togglePause}
@@ -1172,45 +1319,49 @@ export default function App() {
                 mode === 'destroyer' ? 'border-green-500 text-green-500' : 'border-red-500 text-red-500'
               }`}
             >
-              {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+              {isPaused ? <Play className="w-3 h-3 md:w-4 md:h-4" /> : <Pause className="w-3 h-3 md:w-4 md:h-4" />}
             </button>
           )}
         </div>
       </div>
 
       {/* Game Area */}
-      <div className="relative flex-1 w-full my-2 group">
+      <div className="relative flex-1 w-full my-2 group touch-none">
         <canvas
           ref={canvasRef}
           width={GAME_WIDTH}
           height={GAME_HEIGHT}
-          className={`w-full h-full bg-black border-4 rounded-lg cursor-none shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 object-contain ${
+          className={`w-full h-full bg-black border-4 rounded-lg md:cursor-none shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 object-contain ${
             mode === 'destroyer' ? 'border-neutral-800' : 'border-red-900/50'
           }`}
           onMouseDown={handleShoot}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            handleShoot(e);
+          }}
           onMouseMove={handleMouseMove}
         />
 
         {(!gameStarted || isGameOver) ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 z-20 p-8 text-center overflow-y-auto">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 z-20 p-4 md:p-8 text-center overflow-y-auto">
             {isGameOver && (
               <motion.div 
                 initial={{ scale: 0.8, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="mb-8"
+                className="mb-4 md:mb-8"
               >
-                <h2 className="text-7xl font-black mb-2 text-red-600 tracking-tighter italic">
-                  {gameMode === 'level' && timer >= levelTime ? 'LEVEL COMPLETE' : 'GAME OVER'}
+                <h2 className="text-4xl md:text-7xl font-black mb-2 text-red-600 tracking-tighter italic">
+                  {gameMode === 'level' && timerRef.current >= levelTime ? 'LEVEL COMPLETE' : 'GAME OVER'}
                 </h2>
-                <p className="text-red-500/60 uppercase tracking-widest text-sm mb-4">
-                  {gameMode === 'level' && timer >= levelTime ? 'You survived the challenge!' : 'The music has stopped.'}
+                <p className="text-red-500/60 uppercase tracking-widest text-[10px] md:text-sm mb-4">
+                  {gameMode === 'level' && timerRef.current >= levelTime ? 'You survived the challenge!' : 'The music has stopped.'}
                 </p>
 
-                {gameMode === 'level' && timer >= levelTime && (
-                  <div className="flex flex-col items-center gap-4 mb-8 bg-neutral-900/80 p-8 rounded-3xl border border-yellow-500/20 shadow-[0_0_30px_rgba(234,179,8,0.1)]">
-                    <div className="flex gap-4">
+                {gameMode === 'level' && timerRef.current >= levelTime && (
+                  <div className="flex flex-col items-center gap-2 md:gap-4 mb-4 md:mb-8 bg-neutral-900/80 p-4 md:p-8 rounded-3xl border border-yellow-500/20 shadow-[0_0_30px_rgba(234,179,8,0.1)]">
+                    <div className="flex gap-2 md:gap-4">
                       {[...Array(3)].map((_, i) => {
-                        const ratio = destroyedAsteroids / Math.max(1, totalAsteroids);
+                        const ratio = destroyedAsteroidsRef.current / Math.max(1, totalAsteroidsRef.current);
                         const active = (i === 0 && ratio >= 0.25) || (i === 1 && ratio >= 0.5) || (i === 2 && ratio >= 0.75);
                         return (
                           <motion.div
@@ -1219,54 +1370,54 @@ export default function App() {
                             animate={{ scale: 1, rotate: 0 }}
                             transition={{ delay: 0.5 + i * 0.2, type: 'spring' }}
                           >
-                            <Star className={`w-16 h-16 ${active ? 'fill-yellow-500 text-yellow-500 drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]' : 'text-white/5'}`} />
+                            <Star className={`w-10 h-10 md:w-16 md:h-16 ${active ? 'fill-yellow-500 text-yellow-500 drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]' : 'text-white/5'}`} />
                           </motion.div>
                         );
                       })}
                     </div>
                     <div className="text-center">
-                      <div className="text-2xl font-black text-white uppercase tracking-tighter">
-                        {Math.round((destroyedAsteroids / Math.max(1, totalAsteroids)) * 100)}% DESTROYED
+                      <div className="text-lg md:text-2xl font-black text-white uppercase tracking-tighter">
+                        {Math.round((destroyedAsteroidsRef.current / Math.max(1, totalAsteroidsRef.current)) * 100)}% DESTROYED
                       </div>
-                      <div className="text-[10px] font-bold text-white/40 uppercase tracking-[0.3em] mt-1">
-                        {destroyedAsteroids} / {totalAsteroids} ASTEROIDS
+                      <div className="text-[8px] md:text-[10px] font-bold text-white/40 uppercase tracking-[0.3em] mt-1">
+                        {destroyedAsteroidsRef.current} / {totalAsteroidsRef.current} ASTEROIDS
                       </div>
                     </div>
                   </div>
                 )}
                 
                 {gameMode === 'infinite' && (
-                  <div className="bg-neutral-900/80 p-6 rounded-2xl border border-white/10 max-w-md mx-auto">
-                    <div className="text-4xl font-black text-white mb-6 italic">SCORE: {timer}s</div>
+                  <div className="bg-neutral-900/80 p-4 md:p-6 rounded-2xl border border-white/10 max-w-md mx-auto">
+                    <div className="text-2xl md:text-4xl font-black text-white mb-4 md:mb-6 italic">SCORE: {timerRef.current}s</div>
                     
                     {user ? (
-                      <div className="flex flex-col gap-4">
-                        <div className="flex items-center gap-2 bg-black/40 p-3 rounded-xl border border-white/10">
-                          <User className="w-5 h-5 text-white/40" />
+                      <div className="flex flex-col gap-3 md:gap-4">
+                        <div className="flex items-center gap-2 bg-black/40 p-2 md:p-3 rounded-xl border border-white/10">
+                          <User className="w-4 h-4 md:w-5 md:h-5 text-white/40" />
                           <input 
                             type="text" 
                             value={playerName}
                             onChange={(e) => setPlayerName(e.target.value)}
                             placeholder="Your Name"
-                            className="bg-transparent border-none outline-none text-white w-full font-bold"
+                            className="bg-transparent border-none outline-none text-white w-full font-bold text-sm md:text-base"
                             maxLength={20}
                           />
                         </div>
                         <button 
                           onClick={submitScore}
                           disabled={isSubmitting || !playerName.trim()}
-                          className="w-full bg-white text-black py-4 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-white/90 disabled:opacity-50"
+                          className="w-full bg-white text-black py-3 md:py-4 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-white/90 disabled:opacity-50 text-sm md:text-base"
                         >
-                          {isSubmitting ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                          {isSubmitting ? <RefreshCw className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Send className="w-4 h-4 md:w-5 md:h-5" />}
                           SUBMIT SCORE
                         </button>
                       </div>
                     ) : (
                       <button 
                         onClick={handleLogin}
-                        className="w-full bg-white text-black py-4 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-white/90"
+                        className="w-full bg-white text-black py-3 md:py-4 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-white/90 text-sm md:text-base"
                       >
-                        <LogIn className="w-5 h-5" /> LOGIN TO SAVE SCORE
+                        <LogIn className="w-4 h-4 md:w-5 md:h-5" /> LOGIN TO SAVE SCORE
                       </button>
                     )}
                   </div>
@@ -1274,7 +1425,7 @@ export default function App() {
               </motion.div>
             )}
 
-            <div className="flex flex-wrap justify-center gap-4">
+            <div className="flex flex-wrap justify-center gap-2 md:gap-4">
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
@@ -1286,11 +1437,11 @@ export default function App() {
                     startGame();
                   }
                 }}
-                className={`px-12 py-6 font-black text-3xl rounded-sm transition-colors flex items-center gap-4 shadow-2xl ${
+                className={`px-6 md:px-12 py-4 md:py-6 font-black text-xl md:text-3xl rounded-sm transition-colors flex items-center gap-2 md:gap-4 shadow-2xl ${
                   mode === 'destroyer' ? 'bg-green-500 text-black hover:bg-green-400' : 'bg-red-500 text-black hover:bg-red-400'
                 }`}
               >
-                {isGameOver ? <RefreshCw className="w-10 h-10" /> : <Rocket className="w-10 h-10" />}
+                {isGameOver ? <RefreshCw className="w-6 h-6 md:w-10 md:h-10" /> : <Rocket className="w-6 h-6 md:w-10 md:h-10" />}
                 {isGameOver ? 'RESTART' : 'START'}
               </motion.button>
               
@@ -1305,7 +1456,7 @@ export default function App() {
                     particlesRef.current = [];
                     explosionsRef.current = [];
                   }}
-                  className="px-8 py-6 bg-neutral-800 text-white font-black text-xl rounded-sm hover:bg-neutral-700 flex items-center gap-3"
+                  className="px-6 md:px-8 py-4 md:py-6 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700 flex items-center gap-2 md:gap-3"
                 >
                   MENU
                 </motion.button>
@@ -1316,24 +1467,24 @@ export default function App() {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setShowLeaderboard(true)}
-                  className="px-8 py-6 bg-neutral-800 text-white font-black text-xl rounded-sm hover:bg-neutral-700 flex items-center gap-3"
+                  className="px-6 md:px-8 py-4 md:py-6 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700 flex items-center gap-2 md:gap-3"
                 >
-                  <Trophy className="w-8 h-8 text-yellow-500" /> LEADERBOARD
+                  <Trophy className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" /> LEADERBOARD
                 </motion.button>
               )}
             </div>
 
-            <p className={`mt-6 text-[10px] tracking-[0.3em] font-bold animate-pulse ${mode === 'destroyer' ? 'text-green-500/60' : 'text-red-500/60'}`}>
+            <p className={`mt-4 md:mt-6 text-[8px] md:text-[10px] tracking-[0.3em] font-bold animate-pulse ${mode === 'destroyer' ? 'text-green-500/60' : 'text-red-500/60'}`}>
               {isGameOver ? 'SYSTEM CRITICAL ERROR' : 'READY FOR DEPLOYMENT'}
             </p>
           </div>
         ) : isPaused ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 backdrop-blur-sm">
-            <h2 className="text-6xl font-black mb-8 italic tracking-tighter">PAUSED</h2>
-            <div className="flex flex-col gap-4">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 backdrop-blur-sm p-4">
+            <h2 className="text-4xl md:text-6xl font-black mb-8 italic tracking-tighter">PAUSED</h2>
+            <div className="flex flex-col gap-3 md:gap-4 w-full max-w-xs">
               <button 
                 onClick={togglePause}
-                className={`px-10 py-5 font-black text-2xl rounded-sm shadow-xl ${
+                className={`w-full py-4 md:py-5 font-black text-xl md:text-2xl rounded-sm shadow-xl ${
                   mode === 'destroyer' ? 'bg-green-500 text-black' : 'bg-red-500 text-black'
                 }`}
               >
@@ -1341,7 +1492,7 @@ export default function App() {
               </button>
               <button 
                 onClick={() => startGame()}
-                className="px-10 py-5 bg-neutral-800 text-white font-black text-xl rounded-sm hover:bg-neutral-700"
+                className="w-full py-4 md:py-5 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700"
               >
                 RESTART
               </button>
@@ -1358,7 +1509,7 @@ export default function App() {
                     audioRef.current.currentTime = 0;
                   }
                 }}
-                className="px-10 py-5 bg-neutral-800 text-white font-black text-xl rounded-sm hover:bg-neutral-700"
+                className="w-full py-4 md:py-5 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700"
               >
                 MENU
               </button>
@@ -1366,10 +1517,10 @@ export default function App() {
           </div>
         ) : (
           <>
-            {/* Crosshair */}
+            {/* Crosshair - Hidden on mobile */}
             <div
               ref={aimerRef}
-              className="absolute pointer-events-none z-10 flex flex-col items-center gap-2"
+              className="absolute pointer-events-none z-10 hidden md:flex flex-col items-center gap-2"
               style={{ 
                 transform: 'translate(-50%, -50%)' 
               }}
@@ -1384,72 +1535,25 @@ export default function App() {
           </>
         )}
 
-      {/* Tutorial Overlay */}
-      {gameStarted && gameMode === 'tutorial' && !isGameOver && (
-        <div className="absolute top-0 left-0 right-0 z-30 flex items-start justify-center p-4 pointer-events-none">
-          <motion.div 
-            initial={{ y: -100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className={`w-full max-w-2xl bg-neutral-900/95 backdrop-blur-xl border-2 p-6 rounded-2xl text-center shadow-2xl pointer-events-auto ${
-              isTutorialPaused ? 'border-cyan-500' : 'border-cyan-500/20'
-            } transition-all duration-500`}
-          >
-            <div className="flex items-center justify-center gap-3 mb-2">
-              <Info className="w-6 h-6 text-cyan-400" />
-              <div className="text-left">
-                <h3 className="text-xl font-black text-cyan-400 tracking-tighter uppercase italic leading-none">
-                  {tutorialStep === 4 ? "TRAINING COMPLETE" : `Training: Step ${tutorialStep}`}
-                </h3>
-              </div>
-            </div>
-            
-            <p className="text-base font-bold text-white leading-tight mb-4 min-h-[3rem] flex items-center justify-center">
-              {tutorialStep === 0 && "PREPARING TRAINING SESSION..."}
-              {tutorialStep === 1 && `DESTROY 20 EMERALD ASTEROIDS. ONLY EMERALD TARGETS WILL SPAWN. PROGRESS: ${tutorialGreen}/20`}
-              {tutorialStep === 2 && `DESTROY 10 RUBY ASTEROIDS. ONLY RUBY TARGETS WILL SPAWN. PROGRESS: ${tutorialRed}/10`}
-              {tutorialStep === 3 && `DODGE THE STARS FOR 20 SECONDS! MIXED ASTEROIDS ARE NOW APPEARING. TIME: ${Math.max(0, 20 - timer)}s`}
-              {tutorialStep === 4 && "YOU ROCK! SYSTEM CALIBRATION SUCCESSFUL."}
-            </p>
-
-            {isTutorialPaused ? (
-              <button 
-                onClick={() => {
-                  if (tutorialStep === 4) {
-                    setGameStarted(false);
-                    if (audioRef.current) audioRef.current.pause();
-                  } else {
-                    setIsTutorialPaused(false);
-                  }
-                }}
-                className="w-full bg-cyan-500 text-black py-3 rounded-xl font-black text-lg hover:bg-cyan-400 transition-all flex items-center justify-center gap-3 shadow-[0_0_20px_rgba(6,182,212,0.5)]"
-              >
-                {tutorialStep === 4 ? (
-                  <>FINISH <LogOut className="w-5 h-5" /></>
-                ) : (
-                  <><Play className="w-5 h-5 fill-current" /> START THIS STEP</>
-                )}
-              </button>
-            ) : (
-              <div className="flex flex-col items-center gap-1">
-                <div className="flex items-center justify-center gap-2 text-cyan-400 font-black italic text-xs">
-                  <RefreshCw className="w-3 h-3 animate-spin" /> ACTIVE TRAINING...
-                </div>
-              </div>
-            )}
-
-            <div className="mt-4 h-1.5 bg-white/10 rounded-full overflow-hidden">
-              <motion.div 
-                className="h-full bg-cyan-400"
-                animate={{ 
-                  width: tutorialStep === 1 ? `${(tutorialGreen / 20) * 100}%` :
-                         tutorialStep === 2 ? `${(tutorialRed / 10) * 100}%` :
-                         tutorialStep === 3 ? `${(timer / 20) * 100}%` :
-                         tutorialStep === 4 ? '100%' : '0%'
-                }}
-              />
-            </div>
-          </motion.div>
-        </div>
+      {/* Game HUD */}
+      {gameStarted && !isGameOver && (
+        <GameHUD 
+          volumeRef={volumeRef}
+          timerRef={timerRef}
+          destroyedAsteroidsRef={destroyedAsteroidsRef}
+          totalAsteroidsRef={totalAsteroidsRef}
+          tutorialGreenRef={tutorialGreenRef}
+          tutorialRedRef={tutorialRedRef}
+          mode={mode}
+          gameMode={gameMode}
+          levelTime={levelTime}
+          tutorialStep={tutorialStep}
+          volumeFlash={volumeFlash}
+          isTutorialPaused={isTutorialPaused}
+          setIsTutorialPaused={setIsTutorialPaused}
+          setGameStarted={setGameStarted}
+          audioRef={audioRef}
+        />
       )}
 
         {/* Tutorial Prompt Modal */}
@@ -1616,12 +1720,33 @@ export default function App() {
         </AnimatePresence>
       </div>
 
-        {/* HUD Elements */}
-        {gameStarted && gameMode === 'level' && !isGameOver && (
-          <StarHUD totalAsteroids={totalAsteroids} destroyedAsteroids={destroyedAsteroids} />
+        {/* HUD Elements removed - handled by GameHUD */}
+        
+        {/* Mobile Controls */}
+        {gameStarted && !isGameOver && (
+          <div className="md:hidden fixed bottom-20 left-0 right-0 z-40 flex justify-between px-4 pointer-events-none">
+            <button 
+              onClick={() => setMode('destroyer')}
+              className={`w-20 h-20 rounded-full font-black text-base border-4 transition-all active:scale-90 pointer-events-auto flex flex-col items-center justify-center shadow-2xl ${
+                mode === 'destroyer' ? 'bg-green-500 text-black border-green-400 shadow-[0_0_30px_rgba(34,197,94,0.6)]' : 'bg-neutral-900/90 backdrop-blur-md text-green-500/40 border-neutral-800'
+              }`}
+            >
+              <Zap className={`w-5 h-5 mb-1 ${mode === 'destroyer' ? 'fill-black' : 'fill-green-500/20'}`} />
+              EVOLT
+            </button>
+            <button 
+              onClick={() => setMode('creator')}
+              className={`w-20 h-20 rounded-full font-black text-base border-4 transition-all active:scale-90 pointer-events-auto flex flex-col items-center justify-center shadow-2xl ${
+                mode === 'creator' ? 'bg-red-500 text-black border-red-400 shadow-[0_0_30px_rgba(239,68,68,0.6)]' : 'bg-neutral-900/90 backdrop-blur-md text-red-500/40 border-neutral-800'
+              }`}
+            >
+              <Flame className={`w-5 h-5 mb-1 ${mode === 'creator' ? 'fill-black' : 'fill-red-500/20'}`} />
+              RVOLT
+            </button>
+          </div>
         )}
         
-        <VolumeHUD volume={volume} mode={mode} volumeFlash={volumeFlash} />
+        {/* VolumeHUD removed - handled by GameHUD */}
       </div>
   );
 }
