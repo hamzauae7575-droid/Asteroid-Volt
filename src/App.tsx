@@ -336,8 +336,8 @@ const StarHUD = React.memo(({ totalAsteroids, destroyedAsteroids }: { totalAster
               );
             })}
           </div>
-          <div className="h-4 w-px bg-white/10 mx-2" />
-          <div className="text-left">
+          <div className="h-4 w-px bg-white/10 mx-2 hidden" />
+          <div className="text-left hidden">
             <p className="text-[10px] font-black text-white/40 uppercase tracking-widest leading-none mb-1">Mission Progress</p>
             <p className="text-xl font-black italic tracking-tighter leading-none">
               {Math.round(ratio * 100)}% <span className="text-xs opacity-50 not-italic">ACCURACY</span>
@@ -345,7 +345,7 @@ const StarHUD = React.memo(({ totalAsteroids, destroyedAsteroids }: { totalAster
           </div>
         </div>
         
-        <div className="text-right">
+        <div className="text-right hidden">
           <p className="text-[10px] font-black text-white/40 uppercase tracking-widest leading-none mb-1">Targets Destroyed</p>
           <p className="text-xl font-black italic tracking-tighter leading-none">
             {destroyedAsteroids} <span className="text-xs opacity-50 not-italic">/ {totalAsteroids}</span>
@@ -380,7 +380,7 @@ export default function App() {
     name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: ''
   });
   const customSpawnPoolRef = useRef<('ruby' | 'emerald' | 'star')[]>([]);
-  const [unlockedLevels, setUnlockedLevels] = useState<number>(20);
+  const [unlockedLevels, setUnlockedLevels] = useState<number>(1);
   const [highScore, setHighScore] = useState(0);
   const highScoreRef = useRef(highScore);
   useEffect(() => { highScoreRef.current = highScore; }, [highScore]);
@@ -1478,41 +1478,41 @@ export default function App() {
 
   return (
     <div 
-      className={`min-h-screen flex flex-col items-center justify-between p-4 font-mono transition-colors duration-500 overflow-hidden select-none ${
+      className={`h-screen flex flex-col items-center justify-between p-2 font-mono transition-colors duration-500 overflow-hidden select-none ${
         mode === 'destroyer' ? 'bg-neutral-950 text-green-500' : 'bg-neutral-900 text-red-500'
       } ${gameStarted ? 'md:cursor-none' : ''}`}
       onMouseMove={handleMouseMove}
       onTouchMove={handleMouseMove}
     >
       {/* Header */}
-      <div className="w-full flex justify-between items-center px-2 md:px-4 pt-2">
+      <div className="w-full flex justify-between items-center px-1 md:px-2 pt-1">
         <div className="flex flex-col">
-          <h1 className="text-lg md:text-2xl font-black tracking-tighter flex items-center gap-1 md:gap-2">
+          <h1 className="text-sm md:text-xl font-black tracking-tighter flex items-center gap-1 md:gap-2">
             <button onClick={() => {
               const newClicks = zapClicks + 1;
               setZapClicks(newClicks);
               if (newClicks === 50) awardBadge('mystery_badge');
             }}>
-              <Zap className={`w-4 h-4 md:w-6 md:h-6 ${mode === 'destroyer' ? 'fill-green-500' : 'fill-red-500'}`} />
+              <Zap className={`w-3 h-3 md:w-5 md:h-5 ${mode === 'destroyer' ? 'fill-green-500' : 'fill-red-500'}`} />
             </button>
             <span className="hidden sm:inline">{mode === 'destroyer' ? 'Emerald Laser' : 'Ruby Laser'}</span>
             <span className="sm:hidden">{mode === 'destroyer' ? 'EMERALD' : 'RUBY'}</span>
           </h1>
-          <div className="flex items-center gap-2 md:gap-4">
-            <p className="text-[6px] md:text-[8px] opacity-70 uppercase tracking-widest hidden xs:block">
+          <div className="flex items-center gap-1 md:gap-2">
+            <p className="text-[5px] md:text-[7px] opacity-70 uppercase tracking-widest hidden xs:block">
               {mode === 'destroyer' ? 'SHOOT EMERALD | AVOID STARS' : 'SHOOT RUBY | RVOLT MODE'}
             </p>
           </div>
         </div>
 
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-1 items-center">
           {/* Top Bar Icons */}
           <button 
             onClick={() => setShowBadges(true)}
-            className="p-2 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+            className="p-1.5 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
             title="Badges"
           >
-            <Award className="w-5 h-5 text-yellow-500" />
+            <Award className="w-4 h-4 text-yellow-500" />
           </button>
           
           {!gameStarted && (
@@ -1521,25 +1521,25 @@ export default function App() {
                 setGameMode('tutorial');
                 startGame();
               }}
-              className="p-2 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+              className="p-1.5 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
               title="Training / Tutorial"
             >
-              <Info className="w-5 h-5 text-cyan-500" />
+              <Info className="w-4 h-4 text-cyan-500" />
             </button>
           )}
 
           <button 
             onClick={user ? handleLogout : handleLogin}
-            className="p-2 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+            className="p-1.5 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
             title={user ? "Sign Out" : "Sign In"}
           >
-            {user ? <LogOut className="w-5 h-5 text-red-500" /> : <LogIn className="w-5 h-5 text-emerald-500" />}
+            {user ? <LogOut className="w-4 h-4 text-red-500" /> : <LogIn className="w-4 h-4 text-emerald-500" />}
           </button>
 
           {user && (
-            <div className="flex items-center gap-2 bg-neutral-800/50 px-3 py-1.5 rounded-full border border-white/10">
-              <User className="w-5 h-5 text-white/40" />
-              <span className="text-sm font-bold text-white truncate max-w-[100px]">{playerName || 'Player'}</span>
+            <div className="flex items-center gap-1 bg-neutral-800/50 px-2 py-1 rounded-full border border-white/10">
+              <User className="w-4 h-4 text-white/40" />
+              <span className="text-xs font-bold text-white truncate max-w-[80px]">{playerName || 'Player'}</span>
             </div>
           )}
         </div>
@@ -1548,7 +1548,7 @@ export default function App() {
       {/* Game Area */}
       <div 
         ref={containerRef}
-        className={`relative w-full max-w-5xl aspect-[1.5/1] my-4 group touch-none border-4 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 ${
+        className={`relative w-full max-w-4xl aspect-[1.5/1] my-2 group touch-none border-4 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 ${
           mode === 'destroyer' ? 'border-neutral-800' : 'border-red-900/50'
         }`}
       >
