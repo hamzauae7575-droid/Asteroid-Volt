@@ -40,6 +40,10 @@
           "items": { "type": "number" },
           "description": "List of completed level numbers."
         },
+        "unlockedLevels": {
+          "type": "number",
+          "description": "Number of unlocked levels."
+        },
         "highestScore": {
           "type": "number",
           "description": "Highest score in infinite mode."
@@ -60,6 +64,8 @@
         "starCount": { "type": "number" },
         "timeLimit": { "type": "number" },
         "songUrl": { "type": "string" },
+        "backgroundUrl": { "type": "string" },
+        "spawnMode": { "type": "string" },
         "plays": { "type": "number" },
         "createdAt": { "type": "number" }
       },

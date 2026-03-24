@@ -21,6 +21,7 @@ service cloud.firestore {
     //   - role: string
     //   - badges: array
     //   - completedLevels: array
+    //   - unlockedLevels: number
     //   - levelStars: map
     //   - redDestroyed: number
     //   - highestScore: number (optional)
@@ -37,6 +38,8 @@ service cloud.firestore {
     //   - starCount: number (required, >= 0)
     //   - timeLimit: number (required, >= 10)
     //   - songUrl: string (optional)
+    //   - backgroundUrl: string (optional)
+    //   - spawnMode: string (optional, 'equal' or 'progressive')
     //   - plays: number (required, >= 0)
     //   - createdAt: number (required)
     //
@@ -78,7 +81,7 @@ service cloud.firestore {
 
     function isValidLevel(data) {
       let hasRequired = hasRequiredFields(['id', 'name', 'creatorId', 'creatorName', 'rubyCount', 'emeraldCount', 'starCount', 'timeLimit', 'plays', 'createdAt']);
-      let hasOnlyAllowed = hasOnlyAllowedFields(['id', 'name', 'creatorId', 'creatorName', 'rubyCount', 'emeraldCount', 'starCount', 'timeLimit', 'songUrl', 'plays', 'createdAt']);
+      let hasOnlyAllowed = hasOnlyAllowedFields(['id', 'name', 'creatorId', 'creatorName', 'rubyCount', 'emeraldCount', 'starCount', 'timeLimit', 'songUrl', 'backgroundUrl', 'spawnMode', 'plays', 'createdAt']);
       return hasRequired && hasOnlyAllowed &&
              data.id is string && data.id.size() > 0 &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
@@ -89,6 +92,8 @@ service cloud.firestore {
              data.starCount is number && data.starCount >= 0 &&
              data.timeLimit is number && data.timeLimit >= 10 &&
              (!('songUrl' in data) || (data.songUrl is string && data.songUrl.size() <= 500)) &&
+             (!('backgroundUrl' in data) || (data.backgroundUrl is string && data.backgroundUrl.size() <= 500)) &&
+             (!('spawnMode' in data) || (data.spawnMode in ['equal', 'progressive'])) &&
              data.plays is number && data.plays >= 0 &&
              data.createdAt is number;
     }
@@ -112,7 +117,7 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId);
-      allow create, update: if isOwner(userId) && hasOnlyAllowedFields(['name', 'email', 'role', 'photoURL', 'badges', 'completedLevels', 'levelStars', 'redDestroyed', 'highestScore']) &&
+      allow create, update: if isOwner(userId) && hasOnlyAllowedFields(['name', 'email', 'role', 'photoURL', 'badges', 'completedLevels', 'unlockedLevels', 'levelStars', 'redDestroyed', 'highestScore']) &&
                              request.resource.data.role == (resource == null ? 'client' : resource.data.role);
       allow delete: if isAdmin();
     }

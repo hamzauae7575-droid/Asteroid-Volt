@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play, Bomb, RefreshCw, Trophy, Clock, Infinity, LogIn, LogOut, User, Send, HelpCircle, Award, Star, Shield, Target, Flame, Crown, Medal, Sparkles, Info, X, Lock, Users, PenTool, Globe, Music } from 'lucide-react';
+import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play, Bomb, RefreshCw, Trophy, Clock, Infinity, LogIn, LogOut, User, Send, HelpCircle, Award, Star, Shield, Target, Flame, Crown, Medal, Sparkles, Info, X, Lock, Users, PenTool, Globe, Music, Image } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
@@ -72,6 +72,8 @@ interface CustomLevel {
   starCount: number;
   timeLimit: number;
   songUrl: string;
+  backgroundUrl?: string;
+  spawnMode?: 'equal' | 'progressive';
   plays?: number;
   createdAt?: number;
 }
@@ -376,10 +378,10 @@ export default function App() {
   const [showLevelEditor, setShowLevelEditor] = useState(false);
   const [communityLevels, setCommunityLevels] = useState<CustomLevel[]>([]);
   const [customLevelDraft, setCustomLevelDraft] = useState<Partial<CustomLevel>>({
-    name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: ''
+    name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: '', backgroundUrl: '', spawnMode: 'equal'
   });
   const customSpawnPoolRef = useRef<('ruby' | 'emerald' | 'star')[]>([]);
-  const [unlockedLevels, setUnlockedLevels] = useState<number>(20);
+  const [unlockedLevels, setUnlockedLevels] = useState<number>(1);
   const [highScore, setHighScore] = useState(0);
   const highScoreRef = useRef(highScore);
   useEffect(() => { highScoreRef.current = highScore; }, [highScore]);
@@ -481,7 +483,7 @@ export default function App() {
           setUserBadges(data.badges || []);
           const completed = data.completedLevels || [];
           setCompletedLevels(completed);
-          setUnlockedLevels(20);
+          setUnlockedLevels(data.unlockedLevels || 1);
           setLevelStars(data.levelStars || {});
           setRedDestroyed(data.redDestroyed || 0);
         } else {
@@ -493,6 +495,7 @@ export default function App() {
             role: 'client',
             badges: [],
             completedLevels: [],
+            unlockedLevels: 1,
             levelStars: {},
             redDestroyed: 0,
             highestScore: 0
@@ -502,7 +505,7 @@ export default function App() {
         setPlayerName('');
         setUserBadges([]);
         setCompletedLevels([]);
-        setUnlockedLevels(20);
+        setUnlockedLevels(1);
         setLevelStars({});
         setRedDestroyed(0);
       }
@@ -557,7 +560,8 @@ export default function App() {
 
     const nextLevels = [...new Set([...completedLevels, level])];
     setCompletedLevels(nextLevels);
-    // setUnlockedLevels(Math.max(unlockedLevels, level + 1));
+    const nextUnlocked = Math.max(unlockedLevels, level + 1);
+    setUnlockedLevels(nextUnlocked);
     awardBadge(`level_${level}`);
     
     if (user) {
@@ -565,7 +569,8 @@ export default function App() {
         await updateDoc(doc(db, 'users', user.uid), {
           completedLevels: nextLevels,
           levelStars: newStars,
-          redDestroyed: redDestroyed
+          redDestroyed: redDestroyed,
+          unlockedLevels: nextUnlocked
         });
       } catch (error) {
         console.error("Error updating progress", error);
@@ -772,7 +777,12 @@ export default function App() {
       14: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-17.mp3',
     };
     return levelSongs[currentLevel] || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
-  }, [gameStarted, gameMode, currentLevel]);
+  }, [gameStarted, gameMode, currentLevel, customLevelData]);
+
+  const getBackgroundUrl = useCallback(() => {
+    if (gameMode === 'custom' && customLevelData?.backgroundUrl) return customLevelData.backgroundUrl;
+    return ''; // Default black
+  }, [gameMode, customLevelData]);
 
   // Audio management
   useEffect(() => {
@@ -1113,6 +1123,19 @@ export default function App() {
     const levelInterval = gameModeRef.current === 'level' ? Math.max(500, baseInterval - (currentLevel - 1) * 80) : baseInterval;
     const infiniteInterval = gameModeRef.current === 'infinite' ? Math.max(400, baseInterval - (difficultyRef.current - 1) * 100) : baseInterval;
     let spawnInterval = Math.min(levelInterval, infiniteInterval);
+    
+    if (gameModeRef.current === 'custom' && customLevelData) {
+      const totalItems = (customLevelData.rubyCount || 0) + (customLevelData.emeraldCount || 0) + (customLevelData.starCount || 0);
+      const timeLimit = customLevelData.timeLimit || 60;
+      const avgInterval = (timeLimit * 1000) / Math.max(1, totalItems);
+      
+      if (customLevelData.spawnMode === 'progressive') {
+        const progress = 1 - (timerRef.current / timeLimit);
+        spawnInterval = avgInterval * (1.5 - progress);
+      } else {
+        spawnInterval = avgInterval;
+      }
+    }
     
     // Quality adjustment: slower spawning for low quality
     if (qualityRef.current === 'low') {
@@ -1531,15 +1554,21 @@ export default function App() {
       {/* Game Area */}
       <div 
         ref={containerRef}
-        className={`relative w-full max-w-4xl aspect-[1.5/1] my-4 group touch-none border-4 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 ${
+        className={`relative w-full max-w-4xl aspect-[1.5/1] my-4 group touch-none border-4 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 overflow-hidden ${
           mode === 'destroyer' ? 'border-neutral-800' : 'border-red-900/50'
         }`}
       >
+        {getBackgroundUrl() && (
+          <div 
+            className="absolute inset-0 bg-cover bg-center"
+            style={{ backgroundImage: `url(${getBackgroundUrl()})` }}
+          />
+        )}
         <canvas
           ref={canvasRef}
           width={GAME_WIDTH}
           height={GAME_HEIGHT}
-          className="w-full h-full bg-black rounded-sm"
+          className={`w-full h-full rounded-sm relative z-10 ${getBackgroundUrl() ? 'bg-transparent' : 'bg-black'}`}
           onMouseDown={handleShoot}
           onTouchStart={(e) => {
             e.preventDefault();
@@ -2012,6 +2041,7 @@ export default function App() {
                       if (isLocked) return;
                       setGameMode('level');
                       setGameId(levelNum);
+                      setCurrentLevel(levelNum);
                       setShowLevelSelector(false);
                       startGame();
                     }}
@@ -2130,56 +2160,127 @@ export default function App() {
                           max="300"
                         />
                       </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Music className="w-4 h-4"/> Custom Song URL (Optional)</label>
-                      <div className="flex flex-col gap-2">
-                        <input 
-                          type="text" 
-                          value={customLevelDraft.songUrl || ''}
-                          onChange={e => {
-                            setCustomLevelDraft(prev => ({ ...prev, songUrl: e.target.value }));
-                          }}
-                          className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-sm"
-                          placeholder="https://example.com/song.mp3"
-                        />
+                      <div>
+                        <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest text-purple-500">Spawn Mode</label>
                         <div className="flex gap-2">
                           <button 
-                            onClick={() => {
-                              const input = document.createElement('input');
-                              input.type = 'file';
-                              input.accept = 'audio/*';
-                              input.onchange = (e: any) => {
-                                const file = e.target.files[0];
-                                if (file) {
-                                  const url = URL.createObjectURL(file);
-                                  setCustomLevelDraft(prev => ({ ...prev, songUrl: url }));
-                                }
-                              };
-                              input.click();
-                            }}
-                            className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                            onClick={() => setCustomLevelDraft(prev => ({ ...prev, spawnMode: 'equal' }))}
+                            className={`flex-1 py-3 rounded-xl font-bold text-xs transition-colors ${customLevelDraft.spawnMode === 'equal' ? 'bg-purple-500 text-white' : 'bg-white/5 border border-white/10 text-white/40'}`}
                           >
-                            <Send className="w-3 h-3" /> FROM FILES
+                            EQUAL
                           </button>
                           <button 
-                            onClick={() => {
-                              window.open('https://www.google.com/search?q=royalty+free+game+music+mp3+direct+link', '_blank');
-                            }}
-                            className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                            onClick={() => setCustomLevelDraft(prev => ({ ...prev, spawnMode: 'progressive' }))}
+                            className={`flex-1 py-3 rounded-xl font-bold text-xs transition-colors ${customLevelDraft.spawnMode === 'progressive' ? 'bg-purple-500 text-white' : 'bg-white/5 border border-white/10 text-white/40'}`}
                           >
-                            <Globe className="w-3 h-3" /> SEARCH GOOGLE
+                            PROGRESSIVE
                           </button>
-                          <button 
-                            onClick={() => {
-                              window.open('https://drive.google.com', '_blank');
-                              alert('Upload your music to Google Drive, right-click -> Share -> Anyone with link, then copy the link and use a direct link generator to paste it here.');
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Music className="w-4 h-4"/> Custom Song URL (Optional)</label>
+                        <div className="flex flex-col gap-2">
+                          <input 
+                            type="text" 
+                            value={customLevelDraft.songUrl || ''}
+                            onChange={e => {
+                              setCustomLevelDraft(prev => ({ ...prev, songUrl: e.target.value }));
                             }}
-                            className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
-                          >
-                            <Music className="w-3 h-3" /> GOOGLE DRIVE
-                          </button>
+                            className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-sm"
+                            placeholder="https://example.com/song.mp3"
+                          />
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => {
+                                const input = document.createElement('input');
+                                input.type = 'file';
+                                input.accept = 'audio/*';
+                                input.onchange = (e: any) => {
+                                  const file = e.target.files[0];
+                                  if (file) {
+                                    const url = URL.createObjectURL(file);
+                                    setCustomLevelDraft(prev => ({ ...prev, songUrl: url }));
+                                  }
+                                };
+                                input.click();
+                              }}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                            >
+                              <Send className="w-3 h-3" /> FROM FILES
+                            </button>
+                            <button 
+                              onClick={() => {
+                                window.open('https://www.google.com/search?q=royalty+free+game+music+mp3+direct+link', '_blank');
+                              }}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                            >
+                              <Globe className="w-3 h-3" /> SEARCH GOOGLE
+                            </button>
+                            <button 
+                              onClick={() => {
+                                window.open('https://drive.google.com', '_blank');
+                                alert('Upload your music to Google Drive, right-click -> Share -> Anyone with link, then copy the link and use a direct link generator to paste it here.');
+                              }}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                            >
+                              <Music className="w-3 h-3" /> GOOGLE DRIVE
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Image className="w-4 h-4"/> Custom Background URL (Optional)</label>
+                        <div className="flex flex-col gap-2">
+                          <input 
+                            type="text" 
+                            value={customLevelDraft.backgroundUrl || ''}
+                            onChange={e => {
+                              setCustomLevelDraft(prev => ({ ...prev, backgroundUrl: e.target.value }));
+                            }}
+                            className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-sm"
+                            placeholder="https://example.com/background.jpg"
+                          />
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => {
+                                const input = document.createElement('input');
+                                input.type = 'file';
+                                input.accept = 'image/*';
+                                input.onchange = (e: any) => {
+                                  const file = e.target.files[0];
+                                  if (file) {
+                                    const url = URL.createObjectURL(file);
+                                    setCustomLevelDraft(prev => ({ ...prev, backgroundUrl: url }));
+                                  }
+                                };
+                                input.click();
+                              }}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                            >
+                              <Send className="w-3 h-3" /> FROM FILES
+                            </button>
+                            <button 
+                              onClick={() => {
+                                window.open('https://www.google.com/search?q=space+background+wallpaper+4k+direct+link', '_blank');
+                              }}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                            >
+                              <Globe className="w-3 h-3" /> SEARCH GOOGLE
+                            </button>
+                            <button 
+                              onClick={() => {
+                                window.open('https://drive.google.com', '_blank');
+                                alert('Upload your image to Google Drive, right-click -> Share -> Anyone with link, then copy the link and use a direct link generator to paste it here.');
+                              }}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                            >
+                              <Image className="w-3 h-3" /> GOOGLE DRIVE
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2214,7 +2315,9 @@ export default function App() {
                             emeraldCount: customLevelDraft.emeraldCount || 0,
                             starCount: customLevelDraft.starCount || 0,
                             timeLimit: customLevelDraft.timeLimit || 60,
-                            songUrl: customLevelDraft.songUrl,
+                            songUrl: customLevelDraft.songUrl || '',
+                            backgroundUrl: customLevelDraft.backgroundUrl || '',
+                            spawnMode: customLevelDraft.spawnMode || 'equal',
                             plays: 0,
                             createdAt: Date.now()
                           };
