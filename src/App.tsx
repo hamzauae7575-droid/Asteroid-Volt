@@ -336,8 +336,8 @@ const StarHUD = React.memo(({ totalAsteroids, destroyedAsteroids }: { totalAster
               );
             })}
           </div>
-          <div className="h-4 w-px bg-white/10 mx-2 hidden" />
-          <div className="text-left hidden">
+          <div className="h-4 w-px bg-white/10 mx-2" />
+          <div className="text-left">
             <p className="text-[10px] font-black text-white/40 uppercase tracking-widest leading-none mb-1">Mission Progress</p>
             <p className="text-xl font-black italic tracking-tighter leading-none">
               {Math.round(ratio * 100)}% <span className="text-xs opacity-50 not-italic">ACCURACY</span>
@@ -345,7 +345,7 @@ const StarHUD = React.memo(({ totalAsteroids, destroyedAsteroids }: { totalAster
           </div>
         </div>
         
-        <div className="text-right hidden">
+        <div className="text-right">
           <p className="text-[10px] font-black text-white/40 uppercase tracking-widest leading-none mb-1">Targets Destroyed</p>
           <p className="text-xl font-black italic tracking-tighter leading-none">
             {destroyedAsteroids} <span className="text-xs opacity-50 not-italic">/ {totalAsteroids}</span>
@@ -372,7 +372,6 @@ export default function App() {
   const [gameMode, setGameMode] = useState<'infinite' | 'level' | 'tutorial' | 'custom'>('infinite');
   const gameModeRef = useRef(gameMode);
   const [customLevelData, setCustomLevelData] = useState<CustomLevel | null>(null);
-  const [zapClicks, setZapClicks] = useState(0);
   const [showCommunity, setShowCommunity] = useState(false);
   const [showLevelEditor, setShowLevelEditor] = useState(false);
   const [communityLevels, setCommunityLevels] = useState<CustomLevel[]>([]);
@@ -380,7 +379,7 @@ export default function App() {
     name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: ''
   });
   const customSpawnPoolRef = useRef<('ruby' | 'emerald' | 'star')[]>([]);
-  const [unlockedLevels, setUnlockedLevels] = useState<number>(1);
+  const [unlockedLevels, setUnlockedLevels] = useState<number>(20);
   const [highScore, setHighScore] = useState(0);
   const highScoreRef = useRef(highScore);
   useEffect(() => { highScoreRef.current = highScore; }, [highScore]);
@@ -512,10 +511,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) {
-      setCommunityLevels([]);
-      return;
-    }
     const q = query(collection(db, 'levels'), orderBy('createdAt', 'desc'), limit(50));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const levels: CustomLevel[] = [];
@@ -527,7 +522,7 @@ export default function App() {
       console.error("Failed to fetch community levels:", error);
     });
     return () => unsubscribe();
-  }, [user]);
+  }, []);
 
   const awardBadge = async (badgeId: string) => {
     if (userBadges.includes(badgeId)) return;
@@ -755,13 +750,10 @@ export default function App() {
   }, [sfxEnabled]);
 
   const getSongUrl = useCallback(() => {
+    if (gameMode === 'custom' && customLevelData) return customLevelData.songUrl || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
     if (!gameStarted) return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
     if (gameMode === 'tutorial') return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3';
     if (gameMode === 'infinite') return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3';
-    
-    if (gameMode === 'custom' && customLevelData?.songUrl) {
-      return customLevelData.songUrl;
-    }
     
     const levelSongs: Record<number, string> = {
       1: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
@@ -808,21 +800,12 @@ export default function App() {
       window.addEventListener('click', playOnInteract);
     } else {
       if (audioRef.current.src !== url) {
-        try {
-          audioRef.current.src = url;
-          audioRef.current.load();
-        } catch (e) {
-          console.error("Failed to set audio source:", e);
-          audioRef.current.src = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
-        }
+        audioRef.current.src = url;
       }
       audioRef.current.volume = musicEnabled ? volumeRef.current / 100 : 0;
       audioRef.current.currentTime = 0;
       if ((gameStarted || gameId > 0) && musicEnabled && !isPaused && !isGameOver) {
-        audioRef.current.play().catch((e) => {
-          console.error("Audio play failed:", e);
-          startSynthMusic();
-        });
+        audioRef.current.play().catch(() => startSynthMusic());
       } else {
         audioRef.current.pause();
         stopSynthMusic();
@@ -912,14 +895,18 @@ export default function App() {
     }
 
     const baseSpeed = 2 + Math.random() * 4;
-    const speedMultiplier = gameModeRef.current === 'infinite' ? difficultyRef.current : (1 + (currentLevel - 1) * 0.2);
+    const speedMultiplier = gameModeRef.current === 'infinite' ? (1 + (difficultyRef.current - 1) * 0.5) : (1 + (currentLevel - 1) * 0.2);
     const speed = (isBomb ? 6 : baseSpeed) * speedMultiplier;
 
     const vertices: { x: number; y: number }[] = [];
     const sides = 6;
+    const baseSize = isBomb ? 50 : 30 + Math.random() * 40;
+    const sizeMultiplier = gameModeRef.current === 'infinite' ? (1 + (difficultyRef.current - 1) * 0.2) : 1;
+    const finalSize = baseSize * sizeMultiplier;
+
     for (let i = 0; i < sides; i++) {
       const a = (i * 2 * Math.PI) / sides;
-      const r = (isBomb ? 50 : 30 + Math.random() * 40) * (0.8 + Math.random() * 0.4);
+      const r = finalSize * (0.8 + Math.random() * 0.4);
       vertices.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
     }
 
@@ -931,7 +918,7 @@ export default function App() {
       y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
-      size: isBomb ? 100 : 60 + Math.random() * 80,
+      size: finalSize * 2,
       speed,
       angle,
       rotation: Math.random() * 360,
@@ -1144,7 +1131,9 @@ export default function App() {
 
     // Difficulty scaling in infinite mode
     if (gameModeRef.current === 'infinite') {
-      const newDifficulty = 1 + Math.floor(timerRef.current / 15) * 0.1;
+      const difficultyFromTime = 1 + Math.floor(timerRef.current / 30) * 0.1;
+      const difficultyFromKills = 1 + Math.floor(destroyedAsteroidsRef.current / 10) * 0.1;
+      const newDifficulty = Math.max(difficultyFromTime, difficultyFromKills);
       difficultyRef.current = newDifficulty;
       if (timerRef.current >= 300) awardBadge('infinite_5');
       if (timerRef.current >= 600) awardBadge('infinite_10');
@@ -1478,41 +1467,35 @@ export default function App() {
 
   return (
     <div 
-      className={`h-screen flex flex-col items-center justify-between p-2 font-mono transition-colors duration-500 overflow-hidden select-none ${
+      className={`min-h-screen flex flex-col items-center justify-between p-4 font-mono transition-colors duration-500 overflow-hidden select-none ${
         mode === 'destroyer' ? 'bg-neutral-950 text-green-500' : 'bg-neutral-900 text-red-500'
       } ${gameStarted ? 'md:cursor-none' : ''}`}
       onMouseMove={handleMouseMove}
       onTouchMove={handleMouseMove}
     >
       {/* Header */}
-      <div className="w-full flex justify-between items-center px-1 md:px-2 pt-1">
+      <div className="w-full flex justify-between items-center px-2 md:px-4 pt-2">
         <div className="flex flex-col">
-          <h1 className="text-sm md:text-xl font-black tracking-tighter flex items-center gap-1 md:gap-2">
-            <button onClick={() => {
-              const newClicks = zapClicks + 1;
-              setZapClicks(newClicks);
-              if (newClicks === 50) awardBadge('mystery_badge');
-            }}>
-              <Zap className={`w-3 h-3 md:w-5 md:h-5 ${mode === 'destroyer' ? 'fill-green-500' : 'fill-red-500'}`} />
-            </button>
+          <h1 className="text-lg md:text-2xl font-black tracking-tighter flex items-center gap-1 md:gap-2">
+            <Zap className={`w-4 h-4 md:w-6 md:h-6 ${mode === 'destroyer' ? 'fill-green-500' : 'fill-red-500'}`} />
             <span className="hidden sm:inline">{mode === 'destroyer' ? 'Emerald Laser' : 'Ruby Laser'}</span>
             <span className="sm:hidden">{mode === 'destroyer' ? 'EMERALD' : 'RUBY'}</span>
           </h1>
-          <div className="flex items-center gap-1 md:gap-2">
-            <p className="text-[5px] md:text-[7px] opacity-70 uppercase tracking-widest hidden xs:block">
+          <div className="flex items-center gap-2 md:gap-4">
+            <p className="text-[6px] md:text-[8px] opacity-70 uppercase tracking-widest hidden xs:block">
               {mode === 'destroyer' ? 'SHOOT EMERALD | AVOID STARS' : 'SHOOT RUBY | RVOLT MODE'}
             </p>
           </div>
         </div>
 
-        <div className="flex gap-1 items-center">
+        <div className="flex gap-2 items-center">
           {/* Top Bar Icons */}
           <button 
             onClick={() => setShowBadges(true)}
-            className="p-1.5 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+            className="p-2 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
             title="Badges"
           >
-            <Award className="w-4 h-4 text-yellow-500" />
+            <Award className="w-5 h-5 text-yellow-500" />
           </button>
           
           {!gameStarted && (
@@ -1521,25 +1504,25 @@ export default function App() {
                 setGameMode('tutorial');
                 startGame();
               }}
-              className="p-1.5 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+              className="p-2 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
               title="Training / Tutorial"
             >
-              <Info className="w-4 h-4 text-cyan-500" />
+              <Info className="w-5 h-5 text-cyan-500" />
             </button>
           )}
 
           <button 
             onClick={user ? handleLogout : handleLogin}
-            className="p-1.5 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
+            className="p-2 bg-neutral-800/50 hover:bg-neutral-700 rounded-full transition-all border border-white/10"
             title={user ? "Sign Out" : "Sign In"}
           >
-            {user ? <LogOut className="w-4 h-4 text-red-500" /> : <LogIn className="w-4 h-4 text-emerald-500" />}
+            {user ? <LogOut className="w-5 h-5 text-red-500" /> : <LogIn className="w-5 h-5 text-emerald-500" />}
           </button>
 
           {user && (
-            <div className="flex items-center gap-1 bg-neutral-800/50 px-2 py-1 rounded-full border border-white/10">
-              <User className="w-4 h-4 text-white/40" />
-              <span className="text-xs font-bold text-white truncate max-w-[80px]">{playerName || 'Player'}</span>
+            <div className="flex items-center gap-2 bg-neutral-800/50 px-3 py-1.5 rounded-full border border-white/10">
+              <User className="w-5 h-5 text-white/40" />
+              <span className="text-sm font-bold text-white truncate max-w-[100px]">{playerName || 'Player'}</span>
             </div>
           )}
         </div>
@@ -1548,7 +1531,7 @@ export default function App() {
       {/* Game Area */}
       <div 
         ref={containerRef}
-        className={`relative w-full max-w-4xl aspect-[1.5/1] my-2 group touch-none border-4 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 ${
+        className={`relative w-full max-w-4xl aspect-[1.5/1] my-4 group touch-none border-4 rounded-lg shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-colors duration-500 ${
           mode === 'destroyer' ? 'border-neutral-800' : 'border-red-900/50'
         }`}
       >
@@ -2151,21 +2134,54 @@ export default function App() {
 
                     <div>
                       <label className="block text-xs font-bold text-white/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Music className="w-4 h-4"/> Custom Song URL (Optional)</label>
-                      <input 
-                        type="text" 
-                        value={customLevelDraft.songUrl || ''}
-                        onChange={e => {
-                          const url = e.target.value;
-                          const urlPattern = /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([/\w .-]*)*\/?$/;
-                          if (url && !urlPattern.test(url)) {
-                            alert("Please enter a valid URL.");
-                            return;
-                          }
-                          setCustomLevelDraft(prev => ({ ...prev, songUrl: url }));
-                        }}
-                        className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-sm"
-                        placeholder="https://example.com/song.mp3"
-                      />
+                      <div className="flex flex-col gap-2">
+                        <input 
+                          type="text" 
+                          value={customLevelDraft.songUrl || ''}
+                          onChange={e => {
+                            setCustomLevelDraft(prev => ({ ...prev, songUrl: e.target.value }));
+                          }}
+                          className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-sm"
+                          placeholder="https://example.com/song.mp3"
+                        />
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => {
+                              const input = document.createElement('input');
+                              input.type = 'file';
+                              input.accept = 'audio/*';
+                              input.onchange = (e: any) => {
+                                const file = e.target.files[0];
+                                if (file) {
+                                  const url = URL.createObjectURL(file);
+                                  setCustomLevelDraft(prev => ({ ...prev, songUrl: url }));
+                                }
+                              };
+                              input.click();
+                            }}
+                            className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                          >
+                            <Send className="w-3 h-3" /> FROM FILES
+                          </button>
+                          <button 
+                            onClick={() => {
+                              window.open('https://www.google.com/search?q=royalty+free+game+music+mp3+direct+link', '_blank');
+                            }}
+                            className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                          >
+                            <Globe className="w-3 h-3" /> SEARCH GOOGLE
+                          </button>
+                          <button 
+                            onClick={() => {
+                              window.open('https://drive.google.com', '_blank');
+                              alert('Upload your music to Google Drive, right-click -> Share -> Anyone with link, then copy the link and use a direct link generator to paste it here.');
+                            }}
+                            className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
+                          >
+                            <Music className="w-3 h-3" /> GOOGLE DRIVE
+                          </button>
+                        </div>
+                      </div>
                     </div>
                     
                     <button 
@@ -2183,13 +2199,6 @@ export default function App() {
                       className="w-full bg-purple-500 text-white font-black py-2 rounded-xl hover:bg-purple-400 transition-colors"
                     >
                       AI DISTRIBUTE ITEMS
-                    </button>
-
-                    <button 
-                      onClick={() => alert("Donations are not currently supported. Thank you for your interest!")}
-                      className="w-full bg-yellow-500 text-black font-black py-2 rounded-xl hover:bg-yellow-400 transition-colors"
-                    >
-                      DONATE TO SUPPORT
                     </button>
 
                     <div className="pt-4 flex gap-4">
