@@ -152,32 +152,6 @@ const HeaderHUD = React.memo(({ volumeRef, mode, volumeFlash, destroyedAsteroids
           </div>
         </div>
       </div>
-
-      {/* Mission Progression Bar (Only in Level/Custom Mode) */}
-      {(gameMode === 'level' || gameMode === 'custom') && (
-        <>
-          <div className="w-px h-6 bg-white/10" />
-          <div className="flex items-center gap-2">
-            <div className={`p-1 rounded-lg bg-cyan-500 text-black`}>
-              <Target className="w-3 h-3 md:w-4 md:h-4" />
-            </div>
-            <div className="flex flex-col w-20 md:w-24">
-              <div className="flex justify-between items-center mb-1">
-                <span className="font-black text-[8px] md:text-[10px] tracking-widest uppercase opacity-50 text-cyan-500">Mission</span>
-                <span className="font-black text-xs md:text-sm italic tracking-tighter text-cyan-500">
-                  {Math.round(progress)}<span className="text-[8px] not-italic ml-0.5 opacity-50">%</span>
-                </span>
-              </div>
-              <div className="h-1.5 md:h-2 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
-                <div 
-                  className={`h-full relative transition-all duration-200 bg-cyan-500`}
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        </>
-      )}
     </div>
   );
 });
@@ -239,7 +213,18 @@ const GameHUD = React.memo(({
   return (
     <>
       {(gameMode === 'level' || gameMode === 'custom') && (
-        <div className="absolute top-20 right-4 md:top-24 md:right-8 z-40 pointer-events-none">
+        <div className="absolute top-20 right-4 md:top-24 md:right-8 z-40 flex flex-col items-end gap-2 pointer-events-none">
+          <div className="bg-neutral-900/60 backdrop-blur-md px-4 py-2 rounded-xl border border-white/10 flex items-center gap-3 shadow-2xl">
+            <div className="p-1.5 bg-cyan-500 rounded-lg text-black">
+              <Clock className="w-4 h-4" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[8px] font-black text-white/40 uppercase tracking-widest leading-none mb-0.5">Time Remaining</span>
+              <span className={`text-xl font-black italic tracking-tighter leading-none ${timer < 10 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+                {Math.max(0, timer)}<span className="text-xs not-italic ml-0.5 opacity-50">S</span>
+              </span>
+            </div>
+          </div>
           <StarHUD totalAsteroids={total} destroyedAsteroids={destroyed} />
         </div>
       )}
@@ -340,7 +325,6 @@ const StarHUD = React.memo(({ totalAsteroids, destroyedAsteroids }: { totalAster
           </div>
           <div className="h-4 w-px bg-white/10 mx-2" />
           <div className="text-left">
-            <p className="text-[10px] font-black text-white/40 uppercase tracking-widest leading-none mb-1">Mission Progress</p>
             <p className="text-xl font-black italic tracking-tighter leading-none">
               {Math.round(ratio * 100)}% <span className="text-xs opacity-50 not-italic">ACCURACY</span>
             </p>
@@ -426,6 +410,7 @@ export default function App() {
   const redDestroyedRef = useRef(redDestroyed);
   useEffect(() => { redDestroyedRef.current = redDestroyed; }, [redDestroyed]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [customLeaderboard, setCustomLeaderboard] = useState<{id: string, name: string, score: number, levelName: string, levelId: string}[]>([]);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showLevelSelector, setShowLevelSelector] = useState(false);
   const [showBadges, setShowBadges] = useState(false);
@@ -582,8 +567,11 @@ export default function App() {
   useEffect(() => {
     if (!user) {
       setLeaderboard([]);
+      setCustomLeaderboard([]);
       return;
     }
+    
+    // Infinite mode leaderboard
     const q = query(collection(db, 'users'), orderBy('highestScore', 'desc'), limit(10));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const entries = snapshot.docs.map(doc => {
@@ -599,7 +587,29 @@ export default function App() {
     }, (error) => {
       console.error("Leaderboard listener error:", error);
     });
-    return () => unsubscribe();
+
+    // Custom levels leaderboard
+    const cq = query(collection(db, 'custom_scores'), orderBy('score', 'desc'), limit(10));
+    const unsubscribeCustom = onSnapshot(cq, (snapshot) => {
+      const entries = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.userName || 'Anonymous',
+          score: data.score || 0,
+          levelName: data.levelName || 'Unknown Level',
+          levelId: data.levelId
+        };
+      });
+      setCustomLeaderboard(entries);
+    }, (error) => {
+      console.error("Custom leaderboard listener error:", error);
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeCustom();
+    };
   }, [user]);
 
   const handleLogin = async () => {
@@ -623,21 +633,34 @@ export default function App() {
     setIsSubmitting(true);
     try {
       const nameToSave = playerName.trim();
-      const userRef = doc(db, 'users', user.uid);
-      const userDoc = await getDoc(userRef);
       
-      if (userDoc.exists()) {
-        const currentScore = userDoc.data().highestScore || 0;
-        if (timerRef.current > currentScore) {
-          await updateDoc(userRef, {
-            highestScore: timerRef.current,
-            name: nameToSave
-          });
-        } else {
-          await updateDoc(userRef, {
-            name: nameToSave
-          });
+      if (gameModeRef.current === 'infinite') {
+        const userRef = doc(db, 'users', user.uid);
+        const userDoc = await getDoc(userRef);
+        
+        if (userDoc.exists()) {
+          const currentScore = userDoc.data().highestScore || 0;
+          if (timerRef.current > currentScore) {
+            await updateDoc(userRef, {
+              highestScore: timerRef.current,
+              name: nameToSave
+            });
+          } else {
+            await updateDoc(userRef, {
+              name: nameToSave
+            });
+          }
         }
+      } else if (gameModeRef.current === 'custom' && customLevelData) {
+        // Save to custom scores
+        await addDoc(collection(db, 'custom_scores'), {
+          levelId: customLevelData.id,
+          levelName: customLevelData.name,
+          userId: user.uid,
+          userName: nameToSave,
+          score: destroyedAsteroidsRef.current, // Use accuracy/destroyed for custom levels
+          timestamp: serverTimestamp()
+        });
       }
     } catch (error) {
       console.error("Failed to submit score", error);
@@ -1127,11 +1150,14 @@ export default function App() {
     if (gameModeRef.current === 'custom' && customLevelData) {
       const totalItems = (customLevelData.rubyCount || 0) + (customLevelData.emeraldCount || 0) + (customLevelData.starCount || 0);
       const timeLimit = customLevelData.timeLimit || 60;
-      const avgInterval = (timeLimit * 1000) / Math.max(1, totalItems);
+      // Ensure all items spawn by timeLimit - 2 seconds
+      const spawnTimeWindow = Math.max(1, timeLimit - 2);
+      const avgInterval = (spawnTimeWindow * 1000) / Math.max(1, totalItems);
       
       if (customLevelData.spawnMode === 'progressive') {
         const progress = 1 - (timerRef.current / timeLimit);
-        spawnInterval = avgInterval * (1.5 - progress);
+        // Start slow, end fast
+        spawnInterval = avgInterval * (2.0 - progress * 1.5);
       } else {
         spawnInterval = avgInterval;
       }
@@ -1418,11 +1444,13 @@ export default function App() {
     setIsTutorialPaused(false);
     isTutorialPausedRef.current = false;
     
-    if (gameMode === 'tutorial' as any) setGameMode('infinite');
-    setTutorialStep(4);
-    tutorialStepRef.current = 4;
+    if (gameMode === 'tutorial' as any) {
+      setGameMode('infinite');
+      setTutorialStep(4);
+      tutorialStepRef.current = 4;
+    }
     
-    volumeRef.current = 20;
+    volumeRef.current = gameMode === 'custom' ? 100 : 20;
     timerRef.current = 0;
     difficultyRef.current = 1;
     totalAsteroidsRef.current = 0;
@@ -1436,12 +1464,12 @@ export default function App() {
 
     if (gameMode === 'custom' && customLevelData) {
       const pool: ('ruby' | 'emerald' | 'star')[] = [];
-      for (let i=0; i<customLevelData.rubyCount; i++) pool.push('ruby');
-      for (let i=0; i<customLevelData.emeraldCount; i++) pool.push('emerald');
-      for (let i=0; i<customLevelData.starCount; i++) pool.push('star');
+      for (let i=0; i<(customLevelData.rubyCount || 0); i++) pool.push('ruby');
+      for (let i=0; i<(customLevelData.emeraldCount || 0); i++) pool.push('emerald');
+      for (let i=0; i<(customLevelData.starCount || 0); i++) pool.push('star');
       pool.sort(() => Math.random() - 0.5);
       customSpawnPoolRef.current = pool;
-      timerRef.current = customLevelData.timeLimit;
+      timerRef.current = customLevelData.timeLimit || 60;
     }
     gameModeRef.current = gameMode;
 
@@ -1487,6 +1515,8 @@ export default function App() {
       else audioRef.current.play();
     }
   };
+
+  const [leaderboardTab, setLeaderboardTab] = useState<'infinite' | 'custom'>('infinite');
 
   return (
     <div 
@@ -1784,6 +1814,16 @@ export default function App() {
                       COMMUNITY
                     </motion.button>
                   </div>
+
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setShowLeaderboard(true)}
+                    className="menu-btn w-full py-3 md:py-4 bg-neutral-800 text-white font-black text-lg md:text-2xl rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
+                  >
+                    <Trophy className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" />
+                    LEADERBOARDS
+                  </motion.button>
                   
                   <div className="flex gap-4 w-full">
                     <motion.button
@@ -2288,7 +2328,7 @@ export default function App() {
                     <button 
                       onClick={async () => {
                         if (!customLevelDraft.timeLimit) return alert("Please set a time limit first.");
-                        const prompt = `Distribute ${customLevelDraft.rubyCount || 0} rubies, ${customLevelDraft.emeraldCount || 0} emeralds, and ${customLevelDraft.starCount || 0} stars evenly over ${customLevelDraft.timeLimit} seconds. Return the result as JSON with fields: rubyCount, emeraldCount, starCount.`;
+                        const prompt = `Distribute ${customLevelDraft.rubyCount || 0} rubies, ${customLevelDraft.emeraldCount || 0} emeralds, and ${customLevelDraft.starCount || 0} stars over ${customLevelDraft.timeLimit} seconds using a ${customLevelDraft.spawnMode || 'equal'} distribution mode. ALL items MUST be spawned by second ${Math.max(1, customLevelDraft.timeLimit - 2)} to allow a 2-second buffer at the end. Return the result as JSON with fields: rubyCount, emeraldCount, starCount.`;
                         const response = await ai.models.generateContent({
                           model: "gemini-3-flash-preview",
                           contents: prompt,
@@ -2473,9 +2513,25 @@ export default function App() {
             >
               <div className="w-full max-w-2xl bg-neutral-900 rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
                 <div className="p-8 border-b border-white/10 flex justify-between items-center bg-neutral-800/50">
-                  <h3 className="text-4xl font-black italic tracking-tighter flex items-center gap-4">
-                    <Trophy className="w-10 h-10 text-yellow-500" /> TOP SURVIVORS
-                  </h3>
+                  <div className="flex flex-col">
+                    <h3 className="text-4xl font-black italic tracking-tighter flex items-center gap-4">
+                      <Trophy className="w-10 h-10 text-yellow-500" /> LEADERBOARDS
+                    </h3>
+                    <div className="flex gap-4 mt-4">
+                      <button 
+                        onClick={() => setLeaderboardTab('infinite')}
+                        className={`text-xs font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${leaderboardTab === 'infinite' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-white/40'}`}
+                      >
+                        Infinite Mode
+                      </button>
+                      <button 
+                        onClick={() => setLeaderboardTab('custom')}
+                        className={`text-xs font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${leaderboardTab === 'custom' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-white/40'}`}
+                      >
+                        Custom Levels
+                      </button>
+                    </div>
+                  </div>
                   <button 
                     onClick={() => setShowLeaderboard(false)}
                     className="p-2 hover:bg-white/10 rounded-full transition-colors"
@@ -2496,29 +2552,59 @@ export default function App() {
                         LOGIN WITH GOOGLE
                       </button>
                     </div>
-                  ) : leaderboard.length === 0 ? (
-                    <div className="text-center py-12 text-white/40 font-bold">NO SCORES YET. BE THE FIRST!</div>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      {leaderboard.map((entry, i) => (
-                        <div 
-                          key={entry.id}
-                          className={`flex items-center justify-between p-4 rounded-xl border transition-all ${
-                            entry.uid === user?.uid ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5'
-                          }`}
-                        >
-                          <div className="flex items-center gap-6">
-                            <span className={`text-2xl font-black italic w-8 ${
-                              i === 0 ? 'text-yellow-500' : i === 1 ? 'text-neutral-400' : i === 2 ? 'text-amber-700' : 'text-white/20'
-                            }`}>
-                              #{i + 1}
-                            </span>
-                            <span className="text-xl font-bold">{entry.name}</span>
+                  ) : leaderboardTab === 'infinite' ? (
+                    leaderboard.length === 0 ? (
+                      <div className="text-center py-12 text-white/40 font-bold">NO SCORES YET. BE THE FIRST!</div>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {leaderboard.map((entry, i) => (
+                          <div 
+                            key={entry.id}
+                            className={`flex items-center justify-between p-4 rounded-xl border transition-all ${
+                              entry.uid === user?.uid ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5'
+                            }`}
+                          >
+                            <div className="flex items-center gap-6">
+                              <span className={`text-2xl font-black italic w-8 ${
+                                i === 0 ? 'text-yellow-500' : i === 1 ? 'text-neutral-400' : i === 2 ? 'text-amber-700' : 'text-white/20'
+                              }`}>
+                                #{i + 1}
+                              </span>
+                              <span className="text-xl font-bold">{entry.name}</span>
+                            </div>
+                            <div className="text-2xl font-black italic text-white/80">{entry.score}s</div>
                           </div>
-                          <div className="text-2xl font-black italic text-white/80">{entry.score}s</div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )
+                  ) : (
+                    customLeaderboard.length === 0 ? (
+                      <div className="text-center py-12 text-white/40 font-bold">NO CUSTOM SCORES YET.</div>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {customLeaderboard.map((entry, i) => (
+                          <div 
+                            key={entry.id}
+                            className={`flex items-center justify-between p-4 rounded-xl border transition-all ${
+                              entry.id === user?.uid ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5'
+                            }`}
+                          >
+                            <div className="flex items-center gap-6">
+                              <span className={`text-2xl font-black italic w-8 ${
+                                i === 0 ? 'text-yellow-500' : i === 1 ? 'text-neutral-400' : i === 2 ? 'text-amber-700' : 'text-white/20'
+                              }`}>
+                                #{i + 1}
+                              </span>
+                              <div className="flex flex-col">
+                                <span className="text-xl font-bold">{entry.name}</span>
+                                <span className="text-[10px] font-black text-cyan-500 uppercase tracking-widest">{entry.levelName}</span>
+                              </div>
+                            </div>
+                            <div className="text-2xl font-black italic text-white/80">{entry.score} <span className="text-xs not-italic opacity-50">PTS</span></div>
+                          </div>
+                        ))}
+                      </div>
+                    )
                   )}
                 </div>
                 
