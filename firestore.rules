@@ -99,9 +99,9 @@ service cloud.firestore {
     }
 
     function isValidLevelUpdate(data, oldData) {
-      // Only allow incrementing plays
-      return data.diff(oldData).affectedKeys().hasOnly(['plays']) &&
-             data.plays == oldData.plays + 1;
+      // Allow creator to update everything, or others to only increment plays
+      return (isAuthenticated() && request.auth.uid == oldData.creatorId && isValidLevel(data)) ||
+             (data.diff(oldData).affectedKeys().hasOnly(['plays']) && data.plays == oldData.plays + 1);
     }
 
     // ===============================================================
@@ -135,7 +135,9 @@ service cloud.firestore {
                     hasRequiredFields(['levelId', 'userId', 'userName', 'score', 'timestamp']) &&
                     request.resource.data.userId == request.auth.uid &&
                     request.resource.data.score is number &&
-                    request.resource.data.timestamp is timestamp;
+                    request.resource.data.timestamp is timestamp &&
+                    (!('accuracy' in request.resource.data) || request.resource.data.accuracy is number) &&
+                    (!('completionTime' in request.resource.data) || request.resource.data.completionTime is number);
       allow update, delete: if isAdmin();
     }
   }

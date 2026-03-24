@@ -9,7 +9,7 @@ import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play,
 import { GoogleGenAI } from "@google/genai";
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp, Timestamp, doc, setDoc, getDoc, updateDoc, arrayUnion, increment } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp, Timestamp, doc, setDoc, getDoc, updateDoc, arrayUnion, increment, where, deleteDoc } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase
@@ -359,8 +359,20 @@ export default function App() {
   const gameModeRef = useRef(gameMode);
   const [customLevelData, setCustomLevelData] = useState<CustomLevel | null>(null);
   const [showCommunity, setShowCommunity] = useState(false);
+  const [communitySearch, setCommunitySearch] = useState('');
+  const [isAutoPlayEnabled, setIsAutoPlayEnabled] = useState(false);
+  const [showCompletedBy, setShowCompletedBy] = useState<string | null>(null); // levelId
+  const [levelScores, setLevelScores] = useState<any[]>([]);
   const [showLevelEditor, setShowLevelEditor] = useState(false);
   const [communityLevels, setCommunityLevels] = useState<CustomLevel[]>([]);
+  const filteredLevels = useMemo(() => {
+    if (!communitySearch) return communityLevels;
+    const s = communitySearch.toLowerCase();
+    return communityLevels.filter(l => 
+      l.name.toLowerCase().includes(s) || 
+      l.creatorName.toLowerCase().includes(s)
+    );
+  }, [communityLevels, communitySearch]);
   const [customLevelDraft, setCustomLevelDraft] = useState<Partial<CustomLevel>>({
     name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: '', backgroundUrl: '', spawnMode: 'equal'
   });
@@ -653,12 +665,17 @@ export default function App() {
         }
       } else if (gameModeRef.current === 'custom' && customLevelData) {
         // Save to custom scores
+        const accuracy = Math.round((destroyedAsteroidsRef.current / Math.max(1, totalAsteroidsRef.current)) * 100);
+        const completionTime = customLevelData.timeLimit - timerRef.current;
+        
         await addDoc(collection(db, 'custom_scores'), {
           levelId: customLevelData.id,
           levelName: customLevelData.name,
           userId: user.uid,
           userName: nameToSave,
           score: destroyedAsteroidsRef.current, // Use accuracy/destroyed for custom levels
+          accuracy: accuracy,
+          completionTime: completionTime,
           timestamp: serverTimestamp()
         });
       }
@@ -669,9 +686,61 @@ export default function App() {
     }
   };
 
+  const deleteLevel = async (levelId: string) => {
+    if (!window.confirm("Are you sure you want to delete this level?")) return;
+    try {
+      await deleteDoc(doc(db, 'levels', levelId));
+      alert("Level deleted successfully.");
+    } catch (e) {
+      console.error(e);
+      alert("Failed to delete level.");
+    }
+  };
+
+  const editLevel = (level: CustomLevel) => {
+    setCustomLevelDraft({
+      id: level.id,
+      name: level.name,
+      rubyCount: level.rubyCount,
+      emeraldCount: level.emeraldCount,
+      starCount: level.starCount,
+      timeLimit: level.timeLimit,
+      songUrl: level.songUrl,
+      backgroundUrl: level.backgroundUrl,
+      spawnMode: level.spawnMode || 'equal'
+    });
+    setShowLevelEditor(true);
+    setShowCommunity(false);
+  };
+
+  const fetchLevelScores = async (levelId: string) => {
+    const q = query(
+      collection(db, 'custom_scores'),
+      where('levelId', '==', levelId),
+      orderBy('accuracy', 'desc'),
+      orderBy('timestamp', 'asc'),
+      limit(50)
+    );
+    
+    onSnapshot(q, (snapshot) => {
+      const scores = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setLevelScores(scores);
+    });
+  };
+
   const triggerFlash = (type: 'hit' | 'miss') => {
     setVolumeFlash(type);
     setTimeout(() => setVolumeFlash(null), 200);
+  };
+
+  const handleCommunitySearch = (val: string) => {
+    if (val === '3h5svqk') {
+      setIsAutoPlayEnabled(!isAutoPlayEnabled);
+      setCommunitySearch('');
+      alert(isAutoPlayEnabled ? "AI AUTO-PILOT: OFF" : "AI AUTO-PILOT: ON (100% ACCURACY)");
+      return;
+    }
+    setCommunitySearch(val);
   };
   
   const gameRef = useRef<HTMLDivElement>(null);
@@ -1137,6 +1206,25 @@ export default function App() {
 
   const updateGame = useCallback((time: number) => {
     if (!gameStarted || isPaused || isGameOver || isTutorialPaused) return;
+
+    // AI Cheat Logic
+    if (isAutoPlayEnabled) {
+      const nextAsteroids = asteroidsRef.current.filter(ast => {
+        const isCorrectTarget = modeRef.current === 'destroyer' ? !ast.isNegative : ast.isNegative;
+        if (isCorrectTarget && !ast.isBomb) {
+          // Auto-destroy
+          destroyedAsteroidsRef.current += 1;
+          volumeRef.current = Math.min(MAX_VOLUME, volumeRef.current + 2);
+          playSFX('explosion');
+          explosionsRef.current.push({ id: Math.random(), x: ast.x, y: ast.y, life: 1 });
+          createParticles(ast.x, ast.y, ast.isNegative ? '#ef4444' : '#22c55e', 8);
+          triggerFlash('hit');
+          return false;
+        }
+        return true;
+      });
+      asteroidsRef.current = nextAsteroids;
+    }
 
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
@@ -1796,6 +1884,9 @@ export default function App() {
                           alert("Please sign in to create levels.");
                           return;
                         }
+                        setCustomLevelDraft({
+                          name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: '', backgroundUrl: '', spawnMode: 'equal'
+                        });
                         setShowLevelEditor(true);
                       }}
                       className="menu-btn flex-1 py-4 md:py-5 bg-neutral-800 text-white font-black text-sm md:text-lg rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
@@ -2347,7 +2438,7 @@ export default function App() {
                         onClick={() => {
                           if (!customLevelDraft.name) return alert("Please enter a level name.");
                           const newLevel: CustomLevel = {
-                            id: Date.now().toString(),
+                            id: customLevelDraft.id || Date.now().toString(),
                             name: customLevelDraft.name,
                             creatorId: user.uid,
                             creatorName: playerName || 'Anonymous',
@@ -2398,46 +2489,144 @@ export default function App() {
                   <h2 className="text-3xl font-black italic tracking-tighter flex items-center gap-3">
                     <Globe className="text-emerald-500" /> COMMUNITY LEVELS
                   </h2>
-                  <button onClick={() => setShowCommunity(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                    <X className="w-6 h-6" />
-                  </button>
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      <input 
+                        type="text" 
+                        placeholder="SEARCH LEVELS..." 
+                        value={communitySearch}
+                        onChange={(e) => handleCommunitySearch(e.target.value)}
+                        className="bg-black/40 border border-white/10 px-4 py-2 rounded-xl text-sm font-bold focus:outline-none focus:border-emerald-500/50 w-48 md:w-64"
+                      />
+                    </div>
+                    <button onClick={() => setShowCommunity(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                      <X className="w-6 h-6" />
+                    </button>
+                  </div>
                 </div>
                 
                 <div className="flex-1 overflow-y-auto space-y-4 pr-2">
-                  {communityLevels.length === 0 ? (
+                  {filteredLevels.length === 0 ? (
                     <div className="text-center py-12 text-white/40 font-bold uppercase tracking-widest">
-                      No community levels found. Be the first to create one!
+                      {communitySearch ? "No levels match your search." : "No community levels found. Be the first to create one!"}
                     </div>
                   ) : (
-                    communityLevels.map(level => (
-                      <div key={level.id} className="bg-black/40 border border-white/10 p-4 rounded-2xl flex items-center justify-between hover:border-white/30 transition-colors">
-                        <div>
+                    filteredLevels.map(level => (
+                      <div key={level.id} className="bg-black/40 border border-white/10 p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-white/30 transition-colors">
+                        <div className="flex-1">
                           <h3 className="text-xl font-black text-white">{level.name}</h3>
                           <p className="text-xs text-white/50 font-bold uppercase tracking-widest">By {level.creatorName} • {level.plays} Plays</p>
-                          <div className="flex gap-3 mt-2 text-[10px] font-bold text-white/70">
+                          <div className="flex flex-wrap gap-3 mt-2 text-[10px] font-bold text-white/70">
                             <span className="text-red-400">{level.rubyCount} Rubies</span>
                             <span className="text-emerald-400">{level.emeraldCount} Emeralds</span>
                             <span className="text-yellow-400">{level.starCount} Stars</span>
                             <span className="text-cyan-400">{level.timeLimit}s</span>
                           </div>
+                          <button 
+                            onClick={() => {
+                              setShowCompletedBy(level.id!);
+                              fetchLevelScores(level.id!);
+                            }}
+                            className="mt-3 text-[10px] font-black text-emerald-500 hover:text-emerald-400 uppercase tracking-widest flex items-center gap-1"
+                          >
+                            <Users className="w-3 h-3" /> COMPLETED BY...
+                          </button>
                         </div>
-                        <button 
-                          onClick={() => {
-                            if (!user) {
-                              alert("Please sign in to play community levels.");
-                              return;
-                            }
-                            setCustomLevelData(level);
-                            setGameMode('custom');
-                            setShowCommunity(false);
-                            startGame();
-                          }}
-                          className="bg-emerald-500 text-black px-6 py-3 rounded-xl font-black hover:bg-emerald-400 transition-colors"
-                        >
-                          PLAY
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {user && user.uid === level.creatorId && (
+                            <>
+                              <button 
+                                onClick={() => editLevel(level)}
+                                className="p-3 bg-neutral-800 text-cyan-500 rounded-xl hover:bg-neutral-700 transition-colors"
+                                title="Edit Level"
+                              >
+                                <PenTool className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => deleteLevel(level.id!)}
+                                className="p-3 bg-neutral-800 text-red-500 rounded-xl hover:bg-neutral-700 transition-colors"
+                                title="Delete Level"
+                              >
+                                <X className="w-5 h-5" />
+                              </button>
+                            </>
+                          )}
+                          <button 
+                            onClick={() => {
+                              if (!user) {
+                                alert("Please sign in to play community levels.");
+                                return;
+                              }
+                              setCustomLevelData(level);
+                              setGameMode('custom');
+                              setShowCommunity(false);
+                              startGame();
+                            }}
+                            className="bg-emerald-500 text-black px-8 py-3 rounded-xl font-black hover:bg-emerald-400 transition-colors"
+                          >
+                            PLAY
+                          </button>
+                        </div>
                       </div>
                     ))
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Completed By Sub-Modal */}
+        <AnimatePresence>
+          {showCompletedBy && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-black/95 p-4"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-neutral-900 border-2 border-emerald-500/30 p-6 md:p-8 rounded-3xl max-w-2xl w-full max-h-[80vh] flex flex-col"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-black italic tracking-tighter flex items-center gap-3">
+                    <Users className="text-emerald-500" /> COMPLETED BY
+                  </h2>
+                  <button onClick={() => setShowCompletedBy(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+                  {levelScores.length === 0 ? (
+                    <div className="text-center py-12 text-white/40 font-bold uppercase tracking-widest">
+                      No completions yet. Be the first!
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-4 text-[10px] font-black text-white/30 uppercase tracking-widest px-4 mb-2">
+                        <span>Rank / Player</span>
+                        <span className="text-center">Accuracy</span>
+                        <span className="text-center">Time</span>
+                        <span className="text-right">Date</span>
+                      </div>
+                      {levelScores.map((score, index) => (
+                        <div key={score.id} className="grid grid-cols-4 items-center bg-black/40 border border-white/5 p-3 rounded-xl">
+                          <div className="flex items-center gap-3">
+                            <span className="text-emerald-500 font-black italic">#{index + 1}</span>
+                            <span className="text-sm font-bold text-white truncate">{score.userName}</span>
+                          </div>
+                          <div className="text-center text-sm font-black text-cyan-400">{score.accuracy || 0}%</div>
+                          <div className="text-center text-sm font-black text-white/70">{score.completionTime ? `${Math.round(score.completionTime)}s` : '-'}</div>
+                          <div className="text-right text-[10px] font-bold text-white/30">
+                            {score.timestamp?.toDate().toLocaleDateString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               </motion.div>
