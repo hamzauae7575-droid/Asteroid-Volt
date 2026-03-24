@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play, Bomb, RefreshCw, Trophy, Clock, Infinity, LogIn, LogOut, User, Send, HelpCircle, Award, Star, Shield, Target, Flame, Crown, Medal, Sparkles, Info, X, Lock, Users, PenTool, Globe, Music, Image, Trash2 } from 'lucide-react';
+import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play, Bomb, RefreshCw, Trophy, Clock, Infinity, LogIn, LogOut, User, Send, HelpCircle, Award, Star, Shield, Target, Flame, Crown, Medal, Sparkles, Info, X, Lock, Users, PenTool, Globe, Music, Image, Trash2, ImageIcon } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
@@ -80,7 +80,7 @@ interface CustomLevel {
   createdAt?: number;
   rubySongUrl?: string;
   emeraldSongUrl?: string;
-  meteoriteBackgroundUrl?: string;
+  meteoriteMaterialUrl?: string;
 }
 
 interface Asteroid {
@@ -98,7 +98,7 @@ interface Asteroid {
   isBomb?: boolean;
   vertices: { x: number; y: number }[];
   songUrl?: string;
-  backgroundUrl?: string;
+  materialUrl?: string;
 }
 
 interface Particle {
@@ -524,7 +524,8 @@ export default function App() {
     );
   }, [communityLevels, communitySearch]);
   const [customLevelDraft, setCustomLevelDraft] = useState<Partial<CustomLevel>>({
-    name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: '', backgroundUrl: '', spawnMode: 'equal'
+    name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: '', backgroundUrl: '', spawnMode: 'equal',
+    rubySongUrl: '', emeraldSongUrl: '', meteoriteMaterialUrl: ''
   });
   const customSpawnPoolRef = useRef<('ruby' | 'emerald' | 'star')[]>([]);
   const [unlockedLevels, setUnlockedLevels] = useState<number>(1);
@@ -613,7 +614,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const asteroidsRef = useRef<Asteroid[]>([]);
-  const customImagesRef = useRef<{ruby?: HTMLImageElement, emerald?: HTMLImageElement, meteoriteBackground?: HTMLImageElement}>({});
+  const customImagesRef = useRef<{ruby?: HTMLImageElement, emerald?: HTMLImageElement, meteoriteMaterial?: HTMLImageElement}>({});
   const particlesRef = useRef<Particle[]>([]);
   const explosionsRef = useRef<{ id: number; x: number; y: number; life: number }[]>([]);
   const lastSpawnRef = useRef(0);
@@ -1192,7 +1193,7 @@ export default function App() {
       isNegative,
       vertices,
       songUrl: isNegative ? customLevelData?.rubySongUrl : (isBomb ? undefined : customLevelData?.emeraldSongUrl),
-      backgroundUrl: customLevelData?.meteoriteBackgroundUrl
+      materialUrl: customLevelData?.meteoriteMaterialUrl
     };
   }, [currentLevel]);
 
@@ -1314,6 +1315,19 @@ export default function App() {
         const sin = Math.sin(angle);
         ctx.setTransform(cos, sin, -sin, cos, ast.x, ast.y);
         
+        // Define the path for all non-bombs
+        if (!isBomb) {
+          ctx.beginPath();
+          const vertices = ast.vertices;
+          const vLen = vertices.length;
+          for (let j = 0; j < vLen; j++) {
+            const v = vertices[j];
+            if (j === 0) ctx.moveTo(v.x, v.y);
+            else ctx.lineTo(v.x, v.y);
+          }
+          ctx.closePath();
+        }
+
         if (isBomb) {
           const radius = ast.size / 2;
           ctx.beginPath();
@@ -1325,24 +1339,22 @@ export default function App() {
           ctx.arc(0, 0, radius / 2, 0, Math.PI * 2);
           ctx.fill();
           ctx.fillStyle = fillStyle; // Restore for next bomb
-        } else if (customImagesRef.current.meteoriteBackground && customImagesRef.current.meteoriteBackground.complete) {
-          const size = ast.size;
-          ctx.drawImage(customImagesRef.current.meteoriteBackground, -size/2, -size/2, size, size);
-        } else if (customImg && customImg.complete) {
-          const size = ast.size;
-          ctx.drawImage(customImg, -size/2, -size/2, size, size);
         } else {
-          ctx.beginPath();
-          const vertices = ast.vertices;
-          const vLen = vertices.length;
-          for (let j = 0; j < vLen; j++) {
-            const v = vertices[j];
-            if (j === 0) ctx.moveTo(v.x, v.y);
-            else ctx.lineTo(v.x, v.y);
+          const imgToUse = (customImagesRef.current.meteoriteMaterial && customImagesRef.current.meteoriteMaterial.complete) 
+            ? customImagesRef.current.meteoriteMaterial 
+            : (customImg && customImg.complete) ? customImg : null;
+
+          if (imgToUse) {
+            ctx.save();
+            ctx.clip();
+            const size = ast.size;
+            ctx.drawImage(imgToUse, -size/2, -size/2, size, size);
+            ctx.restore();
+            ctx.stroke(); // Draw the outline on top of the material
+          } else {
+            ctx.stroke();
+            ctx.fill();
           }
-          ctx.closePath();
-          ctx.stroke();
-          ctx.fill();
         }
         ctx.setTransform(1, 0, 0, 1, 0, 0);
       }
@@ -1755,17 +1767,17 @@ export default function App() {
       } else {
         customImagesRef.current.emerald = undefined;
       }
-      if (customLevelData.meteoriteBackgroundUrl) {
+      if (customLevelData.meteoriteMaterialUrl) {
         const img = new Image();
-        img.src = customLevelData.meteoriteBackgroundUrl;
-        customImagesRef.current.meteoriteBackground = img;
+        img.src = customLevelData.meteoriteMaterialUrl;
+        customImagesRef.current.meteoriteMaterial = img;
       } else {
-        customImagesRef.current.meteoriteBackground = undefined;
+        customImagesRef.current.meteoriteMaterial = undefined;
       }
     } else {
       customImagesRef.current.ruby = undefined;
       customImagesRef.current.emerald = undefined;
-      customImagesRef.current.meteoriteBackground = undefined;
+      customImagesRef.current.meteoriteMaterial = undefined;
     }
     gameModeRef.current = gameMode;
 
@@ -2089,7 +2101,7 @@ export default function App() {
                         }
                         setCustomLevelDraft({
                           name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: '', backgroundUrl: '', spawnMode: 'equal',
-                          rubySongUrl: '', emeraldSongUrl: '', meteoriteBackgroundUrl: ''
+                          rubySongUrl: '', emeraldSongUrl: '', meteoriteMaterialUrl: ''
                         });
                         setShowLevelEditor(true);
                       }}
@@ -2621,69 +2633,272 @@ export default function App() {
                           <input 
                             type="text" 
                             value={customLevelDraft.backgroundUrl || ''}
-                            onChange={e => {
-                              setCustomLevelDraft(prev => ({ ...prev, backgroundUrl: e.target.value }));
-                            }}
+                            onChange={e => setCustomLevelDraft(prev => ({ ...prev, backgroundUrl: e.target.value }))}
                             className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-sm"
                             placeholder="https://example.com/background.jpg"
                           />
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => {
+                                const input = document.createElement('input');
+                                input.type = 'file';
+                                input.accept = 'image/*';
+                                input.onchange = (e: any) => {
+                                  const file = e.target.files[0];
+                                  if (file) {
+                                    const url = URL.createObjectURL(file);
+                                    setCustomLevelDraft(prev => ({ ...prev, backgroundUrl: url }));
+                                  }
+                                };
+                                input.click();
+                              }}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-[10px] font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-1"
+                            >
+                              <Send className="w-3 h-3" /> FILES
+                            </button>
+                            <button 
+                              onClick={() => window.open('https://www.google.com/search?q=game+background+wallpaper+4k', '_blank')}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-[10px] font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-1"
+                            >
+                              <Globe className="w-3 h-3" /> GOOGLE
+                            </button>
+                            <button 
+                              onClick={() => {
+                                window.open('https://drive.google.com', '_blank');
+                                alert('Upload your image to Google Drive, right-click -> Share -> Anyone with link, then copy the link and use a direct link generator to paste it here.');
+                              }}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-[10px] font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-1"
+                            >
+                              <ImageIcon className="w-3 h-3" /> DRIVE
+                            </button>
+                          </div>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs font-bold text-red-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Music className="w-4 h-4"/> Ruby Song URL</label>
-                          <input 
-                            type="text" 
-                            value={customLevelDraft.rubySongUrl || ''}
-                            onChange={e => setCustomLevelDraft(prev => ({ ...prev, rubySongUrl: e.target.value }))}
-                            className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-red-500 transition-colors text-xs"
-                            placeholder="https://example.com/ruby.mp3"
-                          />
+                          <div className="flex flex-col gap-1">
+                            <input 
+                              type="text" 
+                              value={customLevelDraft.rubySongUrl || ''}
+                              onChange={e => setCustomLevelDraft(prev => ({ ...prev, rubySongUrl: e.target.value }))}
+                              className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-red-500 transition-colors text-xs"
+                              placeholder="https://example.com/ruby.mp3"
+                            />
+                            <div className="flex gap-1">
+                              <button 
+                                onClick={() => {
+                                  const input = document.createElement('input');
+                                  input.type = 'file';
+                                  input.accept = 'audio/*';
+                                  input.onchange = (e: any) => {
+                                    const file = e.target.files[0];
+                                    if (file) {
+                                      const url = URL.createObjectURL(file);
+                                      setCustomLevelDraft(prev => ({ ...prev, rubySongUrl: url }));
+                                    }
+                                  };
+                                  input.click();
+                                }}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                FILES
+                              </button>
+                              <button 
+                                onClick={() => window.open('https://www.google.com/search?q=ruby+sound+effect+mp3', '_blank')}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                GOOGLE
+                              </button>
+                              <button 
+                                onClick={() => window.open('https://drive.google.com', '_blank')}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                DRIVE
+                              </button>
+                            </div>
+                          </div>
                         </div>
                         <div>
                           <label className="block text-xs font-bold text-emerald-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Music className="w-4 h-4"/> Emerald Song URL</label>
-                          <input 
-                            type="text" 
-                            value={customLevelDraft.emeraldSongUrl || ''}
-                            onChange={e => setCustomLevelDraft(prev => ({ ...prev, emeraldSongUrl: e.target.value }))}
-                            className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors text-xs"
-                            placeholder="https://example.com/emerald.mp3"
-                          />
+                          <div className="flex flex-col gap-1">
+                            <input 
+                              type="text" 
+                              value={customLevelDraft.emeraldSongUrl || ''}
+                              onChange={e => setCustomLevelDraft(prev => ({ ...prev, emeraldSongUrl: e.target.value }))}
+                              className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors text-xs"
+                              placeholder="https://example.com/emerald.mp3"
+                            />
+                            <div className="flex gap-1">
+                              <button 
+                                onClick={() => {
+                                  const input = document.createElement('input');
+                                  input.type = 'file';
+                                  input.accept = 'audio/*';
+                                  input.onchange = (e: any) => {
+                                    const file = e.target.files[0];
+                                    if (file) {
+                                      const url = URL.createObjectURL(file);
+                                      setCustomLevelDraft(prev => ({ ...prev, emeraldSongUrl: url }));
+                                    }
+                                  };
+                                  input.click();
+                                }}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                FILES
+                              </button>
+                              <button 
+                                onClick={() => window.open('https://www.google.com/search?q=emerald+sound+effect+mp3', '_blank')}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                GOOGLE
+                              </button>
+                              <button 
+                                onClick={() => window.open('https://drive.google.com', '_blank')}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                DRIVE
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
 
                       <div>
-                        <label className="block text-xs font-bold text-cyan-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Image className="w-4 h-4"/> Meteorite Background URL</label>
-                        <input 
-                          type="text" 
-                          value={customLevelDraft.meteoriteBackgroundUrl || ''}
-                          onChange={e => setCustomLevelDraft(prev => ({ ...prev, meteoriteBackgroundUrl: e.target.value }))}
-                          className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-xs"
-                          placeholder="https://example.com/meteorite-bg.jpg"
-                        />
+                        <label className="block text-xs font-bold text-cyan-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Image className="w-4 h-4"/> Meteorite Material URL</label>
+                        <div className="flex flex-col gap-2">
+                          <input 
+                            type="text" 
+                            value={customLevelDraft.meteoriteMaterialUrl || ''}
+                            onChange={e => setCustomLevelDraft(prev => ({ ...prev, meteoriteMaterialUrl: e.target.value }))}
+                            className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-xs"
+                            placeholder="https://example.com/meteorite-material.jpg"
+                          />
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => {
+                                const input = document.createElement('input');
+                                input.type = 'file';
+                                input.accept = 'image/*';
+                                input.onchange = (e: any) => {
+                                  const file = e.target.files[0];
+                                  if (file) {
+                                    const url = URL.createObjectURL(file);
+                                    setCustomLevelDraft(prev => ({ ...prev, meteoriteMaterialUrl: url }));
+                                  }
+                                };
+                                input.click();
+                              }}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-[10px] font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-1"
+                            >
+                              <Send className="w-3 h-3" /> FILES
+                            </button>
+                            <button 
+                              onClick={() => window.open('https://www.google.com/search?q=rock+texture+seamless+4k', '_blank')}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-[10px] font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-1"
+                            >
+                              <Globe className="w-3 h-3" /> GOOGLE
+                            </button>
+                            <button 
+                              onClick={() => window.open('https://drive.google.com', '_blank')}
+                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-[10px] font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-1"
+                            >
+                              <ImageIcon className="w-3 h-3" /> DRIVE
+                            </button>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs font-bold text-red-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Image className="w-4 h-4"/> Ruby Image URL</label>
-                          <input 
-                            type="text" 
-                            value={customLevelDraft.rubyUrl || ''}
-                            onChange={e => setCustomLevelDraft(prev => ({ ...prev, rubyUrl: e.target.value }))}
-                            className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-red-500 transition-colors text-xs"
-                            placeholder="https://example.com/ruby.png"
-                          />
+                          <div className="flex flex-col gap-1">
+                            <input 
+                              type="text" 
+                              value={customLevelDraft.rubyUrl || ''}
+                              onChange={e => setCustomLevelDraft(prev => ({ ...prev, rubyUrl: e.target.value }))}
+                              className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-red-500 transition-colors text-xs"
+                              placeholder="https://example.com/ruby.png"
+                            />
+                            <div className="flex gap-1">
+                              <button 
+                                onClick={() => {
+                                  const input = document.createElement('input');
+                                  input.type = 'file';
+                                  input.accept = 'image/*';
+                                  input.onchange = (e: any) => {
+                                    const file = e.target.files[0];
+                                    if (file) {
+                                      const url = URL.createObjectURL(file);
+                                      setCustomLevelDraft(prev => ({ ...prev, rubyUrl: url }));
+                                    }
+                                  };
+                                  input.click();
+                                }}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                FILES
+                              </button>
+                              <button 
+                                onClick={() => window.open('https://www.google.com/search?q=ruby+gem+icon+png', '_blank')}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                GOOGLE
+                              </button>
+                              <button 
+                                onClick={() => window.open('https://drive.google.com', '_blank')}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                DRIVE
+                              </button>
+                            </div>
+                          </div>
                         </div>
                         <div>
                           <label className="block text-xs font-bold text-emerald-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Image className="w-4 h-4"/> Emerald Image URL</label>
-                          <input 
-                            type="text" 
-                            value={customLevelDraft.emeraldUrl || ''}
-                            onChange={e => setCustomLevelDraft(prev => ({ ...prev, emeraldUrl: e.target.value }))}
-                            className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors text-xs"
-                            placeholder="https://example.com/emerald.png"
-                          />
+                          <div className="flex flex-col gap-1">
+                            <input 
+                              type="text" 
+                              value={customLevelDraft.emeraldUrl || ''}
+                              onChange={e => setCustomLevelDraft(prev => ({ ...prev, emeraldUrl: e.target.value }))}
+                              className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors text-xs"
+                              placeholder="https://example.com/emerald.png"
+                            />
+                            <div className="flex gap-1">
+                              <button 
+                                onClick={() => {
+                                  const input = document.createElement('input');
+                                  input.type = 'file';
+                                  input.accept = 'image/*';
+                                  input.onchange = (e: any) => {
+                                    const file = e.target.files[0];
+                                    if (file) {
+                                      const url = URL.createObjectURL(file);
+                                      setCustomLevelDraft(prev => ({ ...prev, emeraldUrl: url }));
+                                    }
+                                  };
+                                  input.click();
+                                }}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                FILES
+                              </button>
+                              <button 
+                                onClick={() => window.open('https://www.google.com/search?q=emerald+gem+icon+png', '_blank')}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                GOOGLE
+                              </button>
+                              <button 
+                                onClick={() => window.open('https://drive.google.com', '_blank')}
+                                className="flex-1 bg-neutral-800/50 text-white py-1 rounded text-[8px] font-bold hover:bg-neutral-700"
+                              >
+                                DRIVE
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
