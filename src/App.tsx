@@ -73,6 +73,8 @@ interface CustomLevel {
   timeLimit: number;
   songUrl: string;
   backgroundUrl?: string;
+  rubyUrl?: string;
+  emeraldUrl?: string;
   spawnMode?: 'equal' | 'progressive';
   plays?: number;
   createdAt?: number;
@@ -111,90 +113,29 @@ const GAME_HEIGHT = 800;
 const MAX_VOLUME = 100;
 
 // Memoized HUD Components for performance
-const HeaderHUD = React.memo(({ volumeRef, mode, volumeFlash, destroyedAsteroidsRef, totalAsteroidsRef, gameMode }: { volumeRef: React.MutableRefObject<number>, mode: 'destroyer' | 'creator', volumeFlash: 'hit' | 'miss' | null, destroyedAsteroidsRef: React.MutableRefObject<number>, totalAsteroidsRef: React.MutableRefObject<number>, gameMode: string }) => {
-  const [volume, setVolume] = useState(volumeRef.current);
-  const [destroyed, setDestroyed] = useState(destroyedAsteroidsRef.current);
-  const [total, setTotal] = useState(totalAsteroidsRef.current);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setVolume(volumeRef.current);
-      setDestroyed(destroyedAsteroidsRef.current);
-      setTotal(totalAsteroidsRef.current);
-    }, 100);
-    return () => clearInterval(interval);
-  }, [volumeRef, destroyedAsteroidsRef, totalAsteroidsRef]);
-
-  const progress = total > 0 ? (destroyed / total) * 100 : 0;
-
-  return (
-    <div className={`flex items-center gap-4 bg-neutral-900/90 backdrop-blur-xl px-4 py-2 rounded-xl border-2 transition-all duration-500 shadow-lg ${
-      mode === 'destroyer' ? 'border-green-500/20' : 'border-red-500/20'
-    } ${volumeFlash === 'hit' ? 'scale-105 border-green-500' : volumeFlash === 'miss' ? 'scale-95 border-red-500' : ''}`}>
-      
-      {/* Volume Bar */}
-      <div className="flex items-center gap-2">
-        <div className={`p-1 rounded-lg ${mode === 'destroyer' ? 'bg-green-500 text-black' : 'bg-red-500 text-black'}`}>
-          {volume <= 0 ? <VolumeX className="w-3 h-3 md:w-4 md:h-4" /> : volume < 30 ? <Volume1 className="w-3 h-3 md:w-4 md:h-4" /> : <Volume2 className="w-3 h-3 md:w-4 md:h-4" />}
-        </div>
-        <div className="flex flex-col w-20 md:w-24">
-          <div className="flex justify-between items-center mb-1">
-            <span className="font-black text-[8px] md:text-[10px] tracking-widest uppercase opacity-50">Volume</span>
-            <span className="font-black text-xs md:text-sm italic tracking-tighter">
-              {Math.round(volume)}<span className="text-[8px] not-italic ml-0.5 opacity-50">%</span>
-            </span>
-          </div>
-          <div className="h-1.5 md:h-2 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
-            <div 
-              className={`h-full relative transition-all duration-200 ${mode === 'destroyer' ? 'bg-green-500' : 'bg-red-500'}`}
-              style={{ width: `${volume}%` }}
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-});
-
-const GameHUD = React.memo(({ 
+const HeaderHUD = React.memo(({ 
   volumeRef, 
-  timerRef, 
+  timerRef,
+  mode, 
+  volumeFlash, 
   destroyedAsteroidsRef, 
   totalAsteroidsRef, 
-  tutorialGreenRef, 
-  tutorialRedRef,
-  mode,
   gameMode,
-  levelTime,
-  tutorialStep,
-  volumeFlash,
-  isTutorialPaused,
-  setIsTutorialPaused,
-  setGameStarted,
-  audioRef
-}: {
-  volumeRef: React.MutableRefObject<number>,
+  levelTime 
+}: { 
+  volumeRef: React.MutableRefObject<number>, 
   timerRef: React.MutableRefObject<number>,
-  destroyedAsteroidsRef: React.MutableRefObject<number>,
-  totalAsteroidsRef: React.MutableRefObject<number>,
-  tutorialGreenRef: React.MutableRefObject<number>,
-  tutorialRedRef: React.MutableRefObject<number>,
-  mode: 'destroyer' | 'creator',
-  gameMode: 'infinite' | 'level' | 'tutorial' | 'custom',
-  levelTime: number,
-  tutorialStep: number,
-  volumeFlash: 'hit' | 'miss' | null,
-  isTutorialPaused: boolean,
-  setIsTutorialPaused: (v: boolean) => void,
-  setGameStarted: (v: boolean) => void,
-  audioRef: React.RefObject<HTMLAudioElement | null>
+  mode: 'destroyer' | 'creator', 
+  volumeFlash: 'hit' | 'miss' | null, 
+  destroyedAsteroidsRef: React.MutableRefObject<number>, 
+  totalAsteroidsRef: React.MutableRefObject<number>, 
+  gameMode: string,
+  levelTime: number
 }) => {
   const [volume, setVolume] = useState(volumeRef.current);
   const [timer, setTimer] = useState(timerRef.current);
   const [destroyed, setDestroyed] = useState(destroyedAsteroidsRef.current);
   const [total, setTotal] = useState(totalAsteroidsRef.current);
-  const [green, setGreen] = useState(tutorialGreenRef.current);
-  const [red, setRed] = useState(tutorialRedRef.current);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -202,33 +143,120 @@ const GameHUD = React.memo(({
       setTimer(timerRef.current);
       setDestroyed(destroyedAsteroidsRef.current);
       setTotal(totalAsteroidsRef.current);
+    }, 100);
+    return () => clearInterval(interval);
+  }, [volumeRef, timerRef, destroyedAsteroidsRef, totalAsteroidsRef]);
+
+  const progress = total > 0 ? (destroyed / total) * 100 : 0;
+
+  return (
+    <div className="absolute top-4 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
+      <div className={`flex items-center gap-6 bg-neutral-900/90 backdrop-blur-xl px-6 py-3 rounded-2xl border-2 transition-all duration-500 shadow-2xl ${
+        mode === 'destroyer' ? 'border-green-500/20' : 'border-red-500/20'
+      } ${volumeFlash === 'hit' ? 'scale-105 border-green-500' : volumeFlash === 'miss' ? 'scale-95 border-red-500' : ''}`}>
+        
+        {/* Volume Section */}
+        <div className="flex items-center gap-3">
+          <div className={`p-2 rounded-xl ${mode === 'destroyer' ? 'bg-green-500 text-black' : 'bg-red-500 text-black shadow-[0_0_15px_rgba(239,68,68,0.4)]'}`}>
+            {volume <= 0 ? <VolumeX className="w-4 h-4" /> : volume < 30 ? <Volume1 className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </div>
+          <div className="flex flex-col w-24">
+            <div className="flex justify-between items-center mb-1">
+              <span className="font-black text-[10px] tracking-widest uppercase opacity-50">Volume</span>
+              <span className="font-black text-sm italic tracking-tighter">
+                {Math.round(volume)}<span className="text-[10px] not-italic ml-0.5 opacity-50">%</span>
+              </span>
+            </div>
+            <div className="h-2 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
+              <motion.div 
+                className={`h-full relative transition-all duration-200 ${mode === 'destroyer' ? 'bg-green-500' : 'bg-red-500'}`}
+                animate={{ width: `${volume}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Timer Section */}
+        {(gameMode === 'level' || gameMode === 'custom') && (
+          <>
+            <div className="w-px h-8 bg-white/10" />
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-cyan-500 rounded-xl text-black shadow-lg">
+                <Clock className="w-4 h-4" />
+              </div>
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest leading-none mb-1">TIME</span>
+                <span className={`text-2xl font-black italic tracking-tighter leading-none ${timer < 10 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+                  {Math.max(0, timer)}<span className="text-sm not-italic ml-1 opacity-50">S</span>
+                </span>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Progress Section (Visual Only) */}
+        {(gameMode === 'level' || gameMode === 'custom') && (
+          <>
+            <div className="w-px h-8 bg-white/10" />
+            <div className="flex flex-col w-32">
+              <div className="flex justify-between items-center mb-1">
+                <span className="font-black text-[10px] tracking-widest uppercase opacity-50">Progress</span>
+                <div className="flex gap-0.5">
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className={`w-1.5 h-1.5 rounded-full ${progress >= i * 25 ? 'bg-yellow-500' : 'bg-white/10'}`} />
+                  ))}
+                </div>
+              </div>
+              <div className="h-2 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
+                <motion.div 
+                  className="h-full bg-yellow-500"
+                  animate={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+});
+
+const GameHUD = React.memo(({ 
+  tutorialGreenRef, 
+  tutorialRedRef,
+  timerRef,
+  gameMode,
+  tutorialStep,
+  isTutorialPaused,
+  setIsTutorialPaused,
+  setGameStarted,
+  audioRef
+}: {
+  tutorialGreenRef: React.MutableRefObject<number>,
+  tutorialRedRef: React.MutableRefObject<number>,
+  timerRef: React.MutableRefObject<number>,
+  gameMode: 'infinite' | 'level' | 'tutorial' | 'custom',
+  tutorialStep: number,
+  isTutorialPaused: boolean,
+  setIsTutorialPaused: (v: boolean) => void,
+  setGameStarted: (v: boolean) => void,
+  audioRef: React.RefObject<HTMLAudioElement | null>
+}) => {
+  const [timer, setTimer] = useState(timerRef.current);
+  const [green, setGreen] = useState(tutorialGreenRef.current);
+  const [red, setRed] = useState(tutorialRedRef.current);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTimer(timerRef.current);
       setGreen(tutorialGreenRef.current);
       setRed(tutorialRedRef.current);
     }, 250);
     return () => clearInterval(interval);
-  }, []);
-
-  const ratio = total > 0 ? destroyed / total : 0;
+  }, [timerRef, tutorialGreenRef, tutorialRedRef]);
 
   return (
     <>
-      {(gameMode === 'level' || gameMode === 'custom') && (
-        <div className="absolute top-20 right-4 md:top-24 md:right-8 z-40 flex flex-col items-end gap-2 pointer-events-none">
-          <div className="bg-neutral-900/60 backdrop-blur-md px-4 py-2 rounded-xl border border-white/10 flex items-center gap-3 shadow-2xl">
-            <div className="p-1.5 bg-cyan-500 rounded-lg text-black">
-              <Clock className="w-4 h-4" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[8px] font-black text-white/40 uppercase tracking-widest leading-none mb-0.5">Time Remaining</span>
-              <span className={`text-xl font-black italic tracking-tighter leading-none ${timer < 10 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
-                {Math.max(0, timer)}<span className="text-xs not-italic ml-0.5 opacity-50">S</span>
-              </span>
-            </div>
-          </div>
-          <StarHUD totalAsteroids={total} destroyedAsteroids={destroyed} />
-        </div>
-      )}
-      
       {gameMode === 'tutorial' && (
         <div className="absolute top-0 left-0 right-0 z-30 flex items-start justify-center p-4 pointer-events-none">
           <motion.div 
@@ -460,6 +488,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const asteroidsRef = useRef<Asteroid[]>([]);
+  const customImagesRef = useRef<{ruby?: HTMLImageElement, emerald?: HTMLImageElement}>({});
   const particlesRef = useRef<Particle[]>([]);
   const explosionsRef = useRef<{ id: number; x: number; y: number; life: number }[]>([]);
   const lastSpawnRef = useRef(0);
@@ -1109,13 +1138,16 @@ export default function App() {
       let color = '';
       let fillStyle = '';
       let isBomb = false;
+      let customImg: HTMLImageElement | undefined = undefined;
       
       if (type === 'emerald') {
         color = EMERALD_COLOR;
         fillStyle = EMERALD_FILL;
+        customImg = customImagesRef.current.emerald;
       } else if (type === 'ruby') {
         color = RUBY_COLOR;
         fillStyle = RUBY_FILL;
+        customImg = customImagesRef.current.ruby;
       } else {
         color = BOMB_COLOR;
         fillStyle = BOMB_FILL;
@@ -1157,6 +1189,9 @@ export default function App() {
           ctx.arc(0, 0, radius / 2, 0, Math.PI * 2);
           ctx.fill();
           ctx.fillStyle = fillStyle; // Restore for next bomb
+        } else if (customImg && customImg.complete) {
+          const size = ast.size;
+          ctx.drawImage(customImg, -size/2, -size/2, size, size);
         } else {
           ctx.beginPath();
           const vertices = ast.vertices;
@@ -1209,21 +1244,27 @@ export default function App() {
 
     // AI Cheat Logic
     if (isAutoPlayEnabled) {
-      const nextAsteroids = asteroidsRef.current.filter(ast => {
-        const isCorrectTarget = modeRef.current === 'destroyer' ? !ast.isNegative : ast.isNegative;
-        if (isCorrectTarget && !ast.isBomb) {
-          // Auto-destroy
-          destroyedAsteroidsRef.current += 1;
-          volumeRef.current = Math.min(MAX_VOLUME, volumeRef.current + 2);
-          playSFX('explosion');
-          explosionsRef.current.push({ id: Math.random(), x: ast.x, y: ast.y, life: 1 });
-          createParticles(ast.x, ast.y, ast.isNegative ? '#ef4444' : '#22c55e', 8);
-          triggerFlash('hit');
-          return false;
+      asteroidsRef.current = asteroidsRef.current.filter(ast => {
+        if (ast.isBomb) return true;
+        
+        // Auto-switch mode to hit target perfectly
+        if (ast.isNegative && modeRef.current !== 'creator') {
+          setMode('creator');
+          modeRef.current = 'creator';
+        } else if (!ast.isNegative && modeRef.current !== 'destroyer') {
+          setMode('destroyer');
+          modeRef.current = 'destroyer';
         }
-        return true;
+
+        // Auto-destroy
+        destroyedAsteroidsRef.current += 1;
+        volumeRef.current = Math.min(MAX_VOLUME, volumeRef.current + 2);
+        playSFX('explosion');
+        explosionsRef.current.push({ id: Math.random(), x: ast.x, y: ast.y, life: 1 });
+        createParticles(ast.x, ast.y, ast.isNegative ? '#ef4444' : '#22c55e', 8);
+        triggerFlash('hit');
+        return false;
       });
-      asteroidsRef.current = nextAsteroids;
     }
 
     const ctx = canvasRef.current?.getContext('2d');
@@ -1558,6 +1599,25 @@ export default function App() {
       pool.sort(() => Math.random() - 0.5);
       customSpawnPoolRef.current = pool;
       timerRef.current = customLevelData.timeLimit || 60;
+
+      // Load custom images
+      if (customLevelData.rubyUrl) {
+        const img = new Image();
+        img.src = customLevelData.rubyUrl;
+        customImagesRef.current.ruby = img;
+      } else {
+        customImagesRef.current.ruby = undefined;
+      }
+      if (customLevelData.emeraldUrl) {
+        const img = new Image();
+        img.src = customLevelData.emeraldUrl;
+        customImagesRef.current.emerald = img;
+      } else {
+        customImagesRef.current.emerald = undefined;
+      }
+    } else {
+      customImagesRef.current.ruby = undefined;
+      customImagesRef.current.emerald = undefined;
     }
     gameModeRef.current = gameMode;
 
@@ -1711,31 +1771,26 @@ export default function App() {
                 </p>
 
                 {((gameMode === 'level' && timerRef.current >= levelTime) || (gameMode === 'custom' && timerRef.current <= 0)) && (
-                  <div className="flex flex-col items-center gap-2 md:gap-4 mb-4 md:mb-8 bg-neutral-900/80 p-4 md:p-8 rounded-3xl border border-yellow-500/20 shadow-[0_0_30px_rgba(234,179,8,0.1)]">
-                    <div className="flex gap-2 md:gap-4">
-                      {[...Array(3)].map((_, i) => {
-                        const ratio = destroyedAsteroidsRef.current / Math.max(1, totalAsteroidsRef.current);
-                        const active = (i === 0 && ratio >= 0.25) || (i === 1 && ratio >= 0.5) || (i === 2 && ratio >= 0.75);
-                        return (
-                          <motion.div
-                            key={i}
-                            initial={{ scale: 0, rotate: -180 }}
-                            animate={{ scale: 1, rotate: 0 }}
-                            transition={{ delay: 0.5 + i * 0.2, type: 'spring' }}
-                          >
-                            <Star className={`w-10 h-10 md:w-16 md:h-16 ${active ? 'fill-yellow-500 text-yellow-500 drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]' : 'text-white/5'}`} />
-                          </motion.div>
-                        );
-                      })}
-                    </div>
-                    <div className="text-center">
-                      <div className="text-lg md:text-2xl font-black text-white uppercase tracking-tighter">
-                        {Math.round((destroyedAsteroidsRef.current / Math.max(1, totalAsteroidsRef.current)) * 100)}% DESTROYED
-                      </div>
-                      <div className="text-[8px] md:text-[10px] font-bold text-white/40 uppercase tracking-[0.3em] mt-1">
-                        {destroyedAsteroidsRef.current} / {totalAsteroidsRef.current} ASTEROIDS
-                      </div>
-                    </div>
+                  <div className="flex flex-col items-center gap-4 mb-8 w-full max-w-lg mx-auto">
+                    <StarHUD 
+                      totalAsteroids={totalAsteroidsRef.current} 
+                      destroyedAsteroids={destroyedAsteroidsRef.current} 
+                    />
+                    
+                    {gameMode === 'level' && currentLevel < 10 && (
+                      <motion.button 
+                        initial={{ y: 20, opacity: 0 }}
+                        animate={{ y: 0, opacity: 1 }}
+                        transition={{ delay: 0.8 }}
+                        onClick={() => {
+                          setCurrentLevel(prev => prev + 1);
+                          startGame();
+                        }}
+                        className="w-full bg-yellow-500 text-black py-4 rounded-xl font-black text-xl hover:bg-yellow-400 transition-all flex items-center justify-center gap-3 shadow-[0_0_30px_rgba(234,179,8,0.4)]"
+                      >
+                        NEXT LEVEL <Zap className="w-6 h-6 fill-black" />
+                      </motion.button>
+                    )}
                   </div>
                 )}
                 
@@ -1920,6 +1975,19 @@ export default function App() {
                     <motion.button
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
+                      onClick={() => {
+                        setMusicEnabled(false);
+                        setSfxEnabled(false);
+                        if (audioRef.current) audioRef.current.pause();
+                        stopSynthMusic();
+                      }}
+                      className="menu-btn flex-1 py-3 bg-red-600 text-white font-black text-xs md:text-sm rounded-sm border-2 border-red-400 transition-all focus:outline-none focus:ring-4 focus:ring-white/50"
+                    >
+                      MUTE ALL
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
                       onClick={() => setMusicEnabled(!musicEnabled)}
                       className={`menu-btn flex-1 py-3 font-black text-xs md:text-sm rounded-sm border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
                         musicEnabled ? 'bg-neutral-800 text-white border-white/20' : 'bg-red-900/50 text-red-500 border-red-500/50'
@@ -1999,6 +2067,15 @@ export default function App() {
                     MENU
                   </motion.button>
                   <div className="flex gap-4 w-full">
+                    <button 
+                      onClick={() => {
+                        setMusicEnabled(false);
+                        setSfxEnabled(false);
+                      }}
+                      className="menu-btn flex-1 py-4 bg-red-600 text-white font-black text-sm md:text-base rounded-sm border-2 border-red-400 transition-all focus:outline-none focus:ring-4 focus:ring-white/50"
+                    >
+                      MUTE ALL
+                    </button>
                     <button 
                       onClick={() => setMusicEnabled(!musicEnabled)}
                       className={`menu-btn flex-1 py-4 font-black text-sm md:text-base rounded-sm border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
@@ -2117,23 +2194,29 @@ export default function App() {
 
       {/* Game HUD */}
       {gameStarted && !isGameOver && (
-        <GameHUD 
-          volumeRef={volumeRef}
-          timerRef={timerRef}
-          destroyedAsteroidsRef={destroyedAsteroidsRef}
-          totalAsteroidsRef={totalAsteroidsRef}
-          tutorialGreenRef={tutorialGreenRef}
-          tutorialRedRef={tutorialRedRef}
-          mode={mode}
-          gameMode={gameMode}
-          levelTime={levelTime}
-          tutorialStep={tutorialStep}
-          volumeFlash={volumeFlash}
-          isTutorialPaused={isTutorialPaused}
-          setIsTutorialPaused={setIsTutorialPaused}
-          setGameStarted={setGameStarted}
-          audioRef={audioRef}
-        />
+        <>
+          <HeaderHUD 
+            volumeRef={volumeRef}
+            timerRef={timerRef}
+            destroyedAsteroidsRef={destroyedAsteroidsRef}
+            totalAsteroidsRef={totalAsteroidsRef}
+            mode={mode}
+            gameMode={gameMode}
+            levelTime={levelTime}
+            volumeFlash={volumeFlash}
+          />
+          <GameHUD 
+            timerRef={timerRef}
+            tutorialGreenRef={tutorialGreenRef}
+            tutorialRedRef={tutorialRedRef}
+            gameMode={gameMode}
+            tutorialStep={tutorialStep}
+            isTutorialPaused={isTutorialPaused}
+            setIsTutorialPaused={setIsTutorialPaused}
+            setGameStarted={setGameStarted}
+            audioRef={audioRef}
+          />
+        </>
       )}
 
         {/* Modals removed to simplify flow */}
@@ -2375,43 +2458,29 @@ export default function App() {
                             className="w-full bg-black/50 border border-white/10 rounded-xl p-4 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-sm"
                             placeholder="https://example.com/background.jpg"
                           />
-                          <div className="flex gap-2">
-                            <button 
-                              onClick={() => {
-                                const input = document.createElement('input');
-                                input.type = 'file';
-                                input.accept = 'image/*';
-                                input.onchange = (e: any) => {
-                                  const file = e.target.files[0];
-                                  if (file) {
-                                    const url = URL.createObjectURL(file);
-                                    setCustomLevelDraft(prev => ({ ...prev, backgroundUrl: url }));
-                                  }
-                                };
-                                input.click();
-                              }}
-                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
-                            >
-                              <Send className="w-3 h-3" /> FROM FILES
-                            </button>
-                            <button 
-                              onClick={() => {
-                                window.open('https://www.google.com/search?q=space+background+wallpaper+4k+direct+link', '_blank');
-                              }}
-                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
-                            >
-                              <Globe className="w-3 h-3" /> SEARCH GOOGLE
-                            </button>
-                            <button 
-                              onClick={() => {
-                                window.open('https://drive.google.com', '_blank');
-                                alert('Upload your image to Google Drive, right-click -> Share -> Anyone with link, then copy the link and use a direct link generator to paste it here.');
-                              }}
-                              className="flex-1 bg-neutral-800 text-white py-2 rounded-lg text-xs font-bold hover:bg-neutral-700 transition-colors flex items-center justify-center gap-2"
-                            >
-                              <Image className="w-3 h-3" /> GOOGLE DRIVE
-                            </button>
-                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-red-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Image className="w-4 h-4"/> Ruby Image URL</label>
+                          <input 
+                            type="text" 
+                            value={customLevelDraft.rubyUrl || ''}
+                            onChange={e => setCustomLevelDraft(prev => ({ ...prev, rubyUrl: e.target.value }))}
+                            className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-red-500 transition-colors text-xs"
+                            placeholder="https://example.com/ruby.png"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-emerald-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Image className="w-4 h-4"/> Emerald Image URL</label>
+                          <input 
+                            type="text" 
+                            value={customLevelDraft.emeraldUrl || ''}
+                            onChange={e => setCustomLevelDraft(prev => ({ ...prev, emeraldUrl: e.target.value }))}
+                            className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors text-xs"
+                            placeholder="https://example.com/emerald.png"
+                          />
                         </div>
                       </div>
                     </div>
@@ -2702,24 +2771,11 @@ export default function App() {
             >
               <div className="w-full max-w-2xl bg-neutral-900 rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
                 <div className="p-8 border-b border-white/10 flex justify-between items-center bg-neutral-800/50">
-                  <div className="flex flex-col">
+                  <div className="flex flex-col items-center gap-2">
                     <h3 className="text-4xl font-black italic tracking-tighter flex items-center gap-4">
-                      <Trophy className="w-10 h-10 text-yellow-500" /> LEADERBOARDS
+                      <Trophy className="w-10 h-10 text-yellow-500" /> LEADERBOARD
                     </h3>
-                    <div className="flex gap-4 mt-4">
-                      <button 
-                        onClick={() => setLeaderboardTab('infinite')}
-                        className={`text-xs font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${leaderboardTab === 'infinite' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-white/40'}`}
-                      >
-                        Infinite Mode
-                      </button>
-                      <button 
-                        onClick={() => setLeaderboardTab('custom')}
-                        className={`text-xs font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${leaderboardTab === 'custom' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-white/40'}`}
-                      >
-                        Custom Levels
-                      </button>
-                    </div>
+                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-[0.3em] mt-1">Infinite Mode Rankings</p>
                   </div>
                   <button 
                     onClick={() => setShowLeaderboard(false)}
@@ -2741,7 +2797,7 @@ export default function App() {
                         LOGIN WITH GOOGLE
                       </button>
                     </div>
-                  ) : leaderboardTab === 'infinite' ? (
+                  ) : (
                     leaderboard.length === 0 ? (
                       <div className="text-center py-12 text-white/40 font-bold">NO SCORES YET. BE THE FIRST!</div>
                     ) : (
@@ -2762,34 +2818,6 @@ export default function App() {
                               <span className="text-xl font-bold">{entry.name}</span>
                             </div>
                             <div className="text-2xl font-black italic text-white/80">{entry.score}s</div>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  ) : (
-                    customLeaderboard.length === 0 ? (
-                      <div className="text-center py-12 text-white/40 font-bold">NO CUSTOM SCORES YET.</div>
-                    ) : (
-                      <div className="flex flex-col gap-2">
-                        {customLeaderboard.map((entry, i) => (
-                          <div 
-                            key={entry.id}
-                            className={`flex items-center justify-between p-4 rounded-xl border transition-all ${
-                              entry.id === user?.uid ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5'
-                            }`}
-                          >
-                            <div className="flex items-center gap-6">
-                              <span className={`text-2xl font-black italic w-8 ${
-                                i === 0 ? 'text-yellow-500' : i === 1 ? 'text-neutral-400' : i === 2 ? 'text-amber-700' : 'text-white/20'
-                              }`}>
-                                #{i + 1}
-                              </span>
-                              <div className="flex flex-col">
-                                <span className="text-xl font-bold">{entry.name}</span>
-                                <span className="text-[10px] font-black text-cyan-500 uppercase tracking-widest">{entry.levelName}</span>
-                              </div>
-                            </div>
-                            <div className="text-2xl font-black italic text-white/80">{entry.score} <span className="text-xs not-italic opacity-50">PTS</span></div>
                           </div>
                         ))}
                       </div>
