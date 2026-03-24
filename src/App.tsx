@@ -5,11 +5,11 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play, Bomb, RefreshCw, Trophy, Clock, Infinity, LogIn, LogOut, User, Send, HelpCircle, Award, Star, Shield, Target, Flame, Crown, Medal, Sparkles, Info, X, Lock, Users, PenTool, Globe, Music, Image } from 'lucide-react';
+import { Crosshair, Volume2, VolumeX, Volume1, Volume, Rocket, Zap, Pause, Play, Bomb, RefreshCw, Trophy, Clock, Infinity, LogIn, LogOut, User, Send, HelpCircle, Award, Star, Shield, Target, Flame, Crown, Medal, Sparkles, Info, X, Lock, Users, PenTool, Globe, Music, Image, Trash2 } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp, Timestamp, doc, setDoc, getDoc, updateDoc, arrayUnion, increment, where, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp, Timestamp, doc, setDoc, getDoc, updateDoc, arrayUnion, increment, where, deleteDoc, getDocs } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase
@@ -78,6 +78,9 @@ interface CustomLevel {
   spawnMode?: 'equal' | 'progressive';
   plays?: number;
   createdAt?: number;
+  rubySongUrl?: string;
+  emeraldSongUrl?: string;
+  meteoriteBackgroundUrl?: string;
 }
 
 interface Asteroid {
@@ -94,6 +97,8 @@ interface Asteroid {
   isNegative?: boolean;
   isBomb?: boolean;
   vertices: { x: number; y: number }[];
+  songUrl?: string;
+  backgroundUrl?: string;
 }
 
 interface Particle {
@@ -111,6 +116,147 @@ interface Particle {
 const GAME_WIDTH = 1200;
 const GAME_HEIGHT = 800;
 const MAX_VOLUME = 100;
+
+// Admin Panel Component
+const AdminPanel = ({ onClose, db, currentUser }: { onClose: () => void, db: any, currentUser: any }) => {
+  const [activeTab, setActiveTab] = useState<'players' | 'levels' | 'scores'>('players');
+  const [players, setPlayers] = useState<any[]>([]);
+  const [levels, setLevels] = useState<any[]>([]);
+  const [scores, setScores] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      if (activeTab === 'players') {
+        const q = query(collection(db, 'users'), limit(50));
+        const snap = await getDocs(q);
+        setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } else if (activeTab === 'levels') {
+        const q = query(collection(db, 'levels'), limit(50));
+        const snap = await getDocs(q);
+        setLevels(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } else if (activeTab === 'scores') {
+        const q = query(collection(db, 'scores'), limit(50));
+        const snap = await getDocs(q);
+        setScores(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [activeTab]);
+
+  const deleteItem = async (col: string, id: string) => {
+    if (!confirm(`Delete ${id} from ${col}?`)) return;
+    try {
+      await deleteDoc(doc(db, col, id));
+      fetchData();
+    } catch (e) {
+      alert('Delete failed');
+    }
+  };
+
+  const resetAll = async () => {
+    if (!confirm('RESET ENTIRE GAME? This deletes all levels, scores, and users (except you).')) return;
+    setLoading(true);
+    try {
+      // Note: In a real app, you'd use a batch or cloud function. 
+      // For this demo, we'll delete what we can see.
+      const collections = ['levels', 'scores', 'users'];
+      for (const col of collections) {
+        const snap = await getDocs(collection(db, col));
+        for (const d of snap.docs) {
+          if (col === 'users' && d.id === currentUser.uid) continue;
+          await deleteDoc(doc(db, col, d.id));
+        }
+      }
+      alert('Reset complete');
+      fetchData();
+    } catch (e) {
+      alert('Reset failed');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-md p-4"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        className="bg-neutral-900 border-2 border-purple-500/50 p-6 rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-[0_0_50px_rgba(168,85,247,0.3)]"
+      >
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center gap-3">
+            <Shield className="w-8 h-8 text-purple-500" />
+            <h2 className="text-3xl font-black italic tracking-tighter">ADMIN CONTROL</h2>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={resetAll} className="px-4 py-2 bg-red-600 text-white font-black text-xs rounded-lg hover:bg-red-500">RESET GAME</button>
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X className="w-6 h-6" /></button>
+          </div>
+        </div>
+
+        <div className="flex gap-2 mb-6 bg-black/40 p-1 rounded-xl">
+          {(['players', 'levels', 'scores'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 py-2 rounded-lg font-black text-xs uppercase transition-all ${activeTab === tab ? 'bg-purple-600 text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto pr-2 space-y-2">
+          {loading ? (
+            <div className="flex items-center justify-center py-20"><RefreshCw className="w-8 h-8 animate-spin text-purple-500" /></div>
+          ) : (
+            <>
+              {activeTab === 'players' && players.map(p => (
+                <div key={p.id} className="flex justify-between items-center bg-white/5 p-3 rounded-xl border border-white/5">
+                  <div>
+                    <div className="font-black text-white">{p.name || 'Anonymous'}</div>
+                    <div className="text-[10px] text-white/40 font-mono">{p.id}</div>
+                  </div>
+                  <button onClick={() => deleteItem('users', p.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              ))}
+              {activeTab === 'levels' && levels.map(l => (
+                <div key={l.id} className="flex justify-between items-center bg-white/5 p-3 rounded-xl border border-white/5">
+                  <div>
+                    <div className="font-black text-white">{l.name}</div>
+                    <div className="text-[10px] text-white/40 uppercase">By: {l.creatorName} • {l.plays || 0} Plays</div>
+                  </div>
+                  <button onClick={() => deleteItem('levels', l.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              ))}
+              {activeTab === 'scores' && scores.map(s => (
+                <div key={s.id} className="flex justify-between items-center bg-white/5 p-3 rounded-xl border border-white/5">
+                  <div>
+                    <div className="font-black text-white">{s.playerName}</div>
+                    <div className="text-[10px] text-white/40 uppercase">Score: {s.score} • Level: {s.level}</div>
+                  </div>
+                  <button onClick={() => deleteItem('scores', s.id)} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
 
 // Memoized HUD Components for performance
 const HeaderHUD = React.memo(({ 
@@ -151,63 +297,39 @@ const HeaderHUD = React.memo(({
 
   return (
     <div className="absolute top-4 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
-      <div className={`flex items-center gap-6 bg-neutral-900/90 backdrop-blur-xl px-6 py-3 rounded-2xl border-2 transition-all duration-500 shadow-2xl ${
+      <div className={`flex items-center gap-6 bg-neutral-900/90 backdrop-blur-xl px-6 py-2 rounded-2xl border-2 transition-all duration-500 shadow-2xl ${
         mode === 'destroyer' ? 'border-green-500/20' : 'border-red-500/20'
       } ${volumeFlash === 'hit' ? 'scale-105 border-green-500' : volumeFlash === 'miss' ? 'scale-95 border-red-500' : ''}`}>
         
-        {/* Volume Section */}
-        <div className="flex items-center gap-3">
-          <div className={`p-2 rounded-xl ${mode === 'destroyer' ? 'bg-green-500 text-black' : 'bg-red-500 text-black shadow-[0_0_15px_rgba(239,68,68,0.4)]'}`}>
-            {volume <= 0 ? <VolumeX className="w-4 h-4" /> : volume < 30 ? <Volume1 className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-          </div>
-          <div className="flex flex-col w-24">
-            <div className="flex justify-between items-center mb-1">
-              <span className="font-black text-[10px] tracking-widest uppercase opacity-50">Volume</span>
-              <span className="font-black text-sm italic tracking-tighter">
-                {Math.round(volume)}<span className="text-[10px] not-italic ml-0.5 opacity-50">%</span>
-              </span>
-            </div>
-            <div className="h-2 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
-              <motion.div 
-                className={`h-full relative transition-all duration-200 ${mode === 'destroyer' ? 'bg-green-500' : 'bg-red-500'}`}
-                animate={{ width: `${volume}%` }}
-              />
-            </div>
-          </div>
-        </div>
-
         {/* Timer Section */}
         {(gameMode === 'level' || gameMode === 'custom') && (
-          <>
-            <div className="w-px h-8 bg-white/10" />
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-cyan-500 rounded-xl text-black shadow-lg">
-                <Clock className="w-4 h-4" />
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest leading-none mb-1">TIME</span>
-                <span className={`text-2xl font-black italic tracking-tighter leading-none ${timer < 10 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
-                  {Math.max(0, timer)}<span className="text-sm not-italic ml-1 opacity-50">S</span>
-                </span>
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="p-1.5 bg-cyan-500 rounded-lg text-black shadow-lg">
+              <Clock className="w-3.5 h-3.5" />
             </div>
-          </>
+            <div className="flex flex-col items-center">
+              <span className="text-[8px] font-black text-cyan-400 uppercase tracking-widest leading-none mb-0.5">TIME</span>
+              <span className={`text-xl font-black italic tracking-tighter leading-none ${timer < 10 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+                {Math.max(0, timer)}<span className="text-xs not-italic ml-0.5 opacity-50">S</span>
+              </span>
+            </div>
+          </div>
         )}
 
         {/* Progress Section (Visual Only) */}
         {(gameMode === 'level' || gameMode === 'custom') && (
           <>
-            <div className="w-px h-8 bg-white/10" />
-            <div className="flex flex-col w-32">
-              <div className="flex justify-between items-center mb-1">
-                <span className="font-black text-[10px] tracking-widest uppercase opacity-50">Progress</span>
+            <div className="w-px h-6 bg-white/10" />
+            <div className="flex flex-col w-24">
+              <div className="flex justify-between items-center mb-0.5">
+                <span className="font-black text-[8px] tracking-widest uppercase opacity-50">Progress</span>
                 <div className="flex gap-0.5">
                   {[1, 2, 3].map(i => (
-                    <div key={i} className={`w-1.5 h-1.5 rounded-full ${progress >= i * 25 ? 'bg-yellow-500' : 'bg-white/10'}`} />
+                    <div key={i} className={`w-1 h-1 rounded-full ${progress >= i * 25 ? 'bg-yellow-500' : 'bg-white/10'}`} />
                   ))}
                 </div>
               </div>
-              <div className="h-2 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
+              <div className="h-1.5 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
                 <motion.div 
                   className="h-full bg-yellow-500"
                   animate={{ width: `${progress}%` }}
@@ -474,6 +596,9 @@ export default function App() {
   const [playerName, setPlayerName] = useState('');
   const [gameId, setGameId] = useState(0);
   
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const isAdmin = user?.email === 'hamza.uae7575@gmail.com';
+
   // Refs for performance-critical state in game loop
   const volumeRef = useRef(20);
   const timerRef = useRef(0);
@@ -488,7 +613,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const asteroidsRef = useRef<Asteroid[]>([]);
-  const customImagesRef = useRef<{ruby?: HTMLImageElement, emerald?: HTMLImageElement}>({});
+  const customImagesRef = useRef<{ruby?: HTMLImageElement, emerald?: HTMLImageElement, meteoriteBackground?: HTMLImageElement}>({});
   const particlesRef = useRef<Particle[]>([]);
   const explosionsRef = useRef<{ id: number; x: number; y: number; life: number }[]>([]);
   const lastSpawnRef = useRef(0);
@@ -822,6 +947,13 @@ export default function App() {
     }
   }, []);
 
+  const playCustomAudio = useCallback((url: string) => {
+    if (!sfxEnabled) return;
+    const audio = new Audio(url);
+    audio.volume = 0.5;
+    audio.play().catch(e => console.error("Custom audio play failed", e));
+  }, [sfxEnabled]);
+
   const playSFX = useCallback((type: 'shoot' | 'explosion' | 'hit' | 'miss') => {
     if (!sfxEnabled) return;
     try {
@@ -1041,7 +1173,9 @@ export default function App() {
       vertices.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
     }
 
-    totalAsteroidsRef.current += 1;
+    if (!isBomb) {
+      totalAsteroidsRef.current += 1;
+    }
 
     return {
       id: Math.random(),
@@ -1056,7 +1190,9 @@ export default function App() {
       rotationSpeed: (Math.random() - 0.5) * 10,
       isBomb,
       isNegative,
-      vertices
+      vertices,
+      songUrl: isNegative ? customLevelData?.rubySongUrl : (isBomb ? undefined : customLevelData?.emeraldSongUrl),
+      backgroundUrl: customLevelData?.meteoriteBackgroundUrl
     };
   }, [currentLevel]);
 
@@ -1189,6 +1325,9 @@ export default function App() {
           ctx.arc(0, 0, radius / 2, 0, Math.PI * 2);
           ctx.fill();
           ctx.fillStyle = fillStyle; // Restore for next bomb
+        } else if (customImagesRef.current.meteoriteBackground && customImagesRef.current.meteoriteBackground.complete) {
+          const size = ast.size;
+          ctx.drawImage(customImagesRef.current.meteoriteBackground, -size/2, -size/2, size, size);
         } else if (customImg && customImg.complete) {
           const size = ast.size;
           ctx.drawImage(customImg, -size/2, -size/2, size, size);
@@ -1489,6 +1628,7 @@ export default function App() {
         
         if (isCorrectMode) {
           hit = true;
+          if (ast.songUrl) playCustomAudio(ast.songUrl);
           destroyedAsteroidsRef.current += 1;
           if (gameModeRef.current === 'tutorial') {
             if (ast.isNegative) {
@@ -1615,9 +1755,17 @@ export default function App() {
       } else {
         customImagesRef.current.emerald = undefined;
       }
+      if (customLevelData.meteoriteBackgroundUrl) {
+        const img = new Image();
+        img.src = customLevelData.meteoriteBackgroundUrl;
+        customImagesRef.current.meteoriteBackground = img;
+      } else {
+        customImagesRef.current.meteoriteBackground = undefined;
+      }
     } else {
       customImagesRef.current.ruby = undefined;
       customImagesRef.current.emerald = undefined;
+      customImagesRef.current.meteoriteBackground = undefined;
     }
     gameModeRef.current = gameMode;
 
@@ -1910,7 +2058,7 @@ export default function App() {
                       setGameMode('infinite');
                       startGame();
                     }}
-                    className={`menu-btn w-full py-4 md:py-5 font-black text-xl md:text-2xl rounded-sm transition-colors flex items-center justify-center gap-3 shadow-2xl focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                    className={`menu-btn w-full py-3 md:py-4 font-black text-lg md:text-xl rounded-sm transition-colors flex items-center justify-center gap-3 shadow-2xl focus:outline-none focus:ring-4 focus:ring-white/50 ${
                       mode === 'destroyer' ? 'bg-green-500 text-black hover:bg-green-400' : 'bg-red-500 text-black hover:bg-red-400'
                     }`}
                   >
@@ -1924,7 +2072,7 @@ export default function App() {
                     onClick={() => {
                       setShowLevelSelector(true);
                     }}
-                    className="menu-btn w-full py-3 md:py-4 bg-neutral-800 text-white font-black text-lg md:text-2xl rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
+                    className="menu-btn w-full py-2 md:py-3 bg-neutral-800 text-white font-black text-base md:text-xl rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
                   >
                     <Trophy className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" />
                     LEVELS MODE
@@ -1940,11 +2088,12 @@ export default function App() {
                           return;
                         }
                         setCustomLevelDraft({
-                          name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: '', backgroundUrl: '', spawnMode: 'equal'
+                          name: '', rubyCount: 10, emeraldCount: 10, starCount: 5, timeLimit: 60, songUrl: '', backgroundUrl: '', spawnMode: 'equal',
+                          rubySongUrl: '', emeraldSongUrl: '', meteoriteBackgroundUrl: ''
                         });
                         setShowLevelEditor(true);
                       }}
-                      className="menu-btn flex-1 py-4 md:py-5 bg-neutral-800 text-white font-black text-sm md:text-lg rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
+                      className="menu-btn flex-1 py-3 md:py-4 bg-neutral-800 text-white font-black text-xs md:text-base rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
                     >
                       <PenTool className="w-5 h-5 md:w-6 md:h-6 text-cyan-500" />
                       CREATE LEVEL
@@ -1954,23 +2103,24 @@ export default function App() {
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
                       onClick={() => setShowCommunity(true)}
-                      className="menu-btn flex-1 py-4 md:py-5 bg-neutral-800 text-white font-black text-sm md:text-lg rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
+                      className="menu-btn flex-1 py-3 md:py-4 bg-neutral-800 text-white font-black text-xs md:text-base rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
                     >
                       <Globe className="w-5 h-5 md:w-6 md:h-6 text-emerald-500" />
                       COMMUNITY
                     </motion.button>
                   </div>
 
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => setShowLeaderboard(true)}
-                    className="menu-btn w-full py-3 md:py-4 bg-neutral-800 text-white font-black text-lg md:text-2xl rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 border border-white/10 focus:outline-none focus:ring-4 focus:ring-white/50"
-                  >
-                    <Trophy className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" />
-                    LEADERBOARDS
-                  </motion.button>
-                  
+                  {isAdmin && (
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setShowAdminPanel(true)}
+                      className="menu-btn w-full py-2 bg-purple-600 text-white font-black text-xs rounded-sm border border-purple-400 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Shield className="w-4 h-4" /> ADMIN PANEL
+                    </motion.button>
+                  )}
+
                   <div className="flex gap-4 w-full">
                     <motion.button
                       whileHover={{ scale: 1.02 }}
@@ -1985,7 +2135,7 @@ export default function App() {
                     >
                       MUTE ALL
                     </motion.button>
-                    <motion.button
+                    <motion.button 
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
                       onClick={() => setMusicEnabled(!musicEnabled)}
@@ -1995,15 +2145,26 @@ export default function App() {
                     >
                       MUSIC: {musicEnabled ? 'ON' : 'OFF'}
                     </motion.button>
-                    <button 
+                    <motion.button 
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
                       onClick={() => setSfxEnabled(!sfxEnabled)}
                       className={`menu-btn flex-1 py-3 font-black text-xs md:text-sm rounded-sm border-2 transition-all focus:outline-none focus:ring-4 focus:ring-white/50 ${
                         sfxEnabled ? 'bg-neutral-800 text-white border-white/20' : 'bg-red-900/50 text-red-500 border-red-500/50'
                       }`}
                     >
                       SFX: {sfxEnabled ? 'ON' : 'OFF'}
-                    </button>
+                    </motion.button>
                   </div>
+
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setShowLeaderboard(true)}
+                    className="menu-btn w-full py-4 md:py-5 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 md:gap-3 focus:outline-none focus:ring-4 focus:ring-white/50"
+                  >
+                    <Trophy className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" /> LEADERBOARD
+                  </motion.button>
                   
                   {user && (
                     <div className="w-full flex items-center gap-2 bg-neutral-800/50 p-3 rounded-xl border border-white/10">
@@ -2037,21 +2198,19 @@ export default function App() {
                   )}
                 </>
               ) : (
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => startGame()}
-                  className={`menu-btn w-full py-6 md:py-8 font-black text-2xl md:text-4xl rounded-sm transition-colors flex items-center justify-center gap-4 shadow-2xl focus:outline-none focus:ring-4 focus:ring-white/50 ${
-                    mode === 'destroyer' ? 'bg-green-500 text-black hover:bg-green-400' : 'bg-red-500 text-black hover:bg-red-400'
-                  }`}
-                >
-                  <RefreshCw className="w-10 h-10 md:w-14 md:h-14" />
-                  RESTART
-                </motion.button>
-              )}
-              
-              {isGameOver && (
                 <>
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => startGame()}
+                    className={`menu-btn w-full py-6 md:py-8 font-black text-2xl md:text-4xl rounded-sm transition-colors flex items-center justify-center gap-4 shadow-2xl focus:outline-none focus:ring-4 focus:ring-white/50 ${
+                      mode === 'destroyer' ? 'bg-green-500 text-black hover:bg-green-400' : 'bg-red-500 text-black hover:bg-red-400'
+                    }`}
+                  >
+                    <RefreshCw className="w-10 h-10 md:w-14 md:h-14" />
+                    RESTART
+                  </motion.button>
+
                   <motion.button
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
@@ -2066,6 +2225,7 @@ export default function App() {
                   >
                     MENU
                   </motion.button>
+
                   <div className="flex gap-4 w-full">
                     <button 
                       onClick={() => {
@@ -2093,18 +2253,16 @@ export default function App() {
                       SFX: {sfxEnabled ? 'ON' : 'OFF'}
                     </button>
                   </div>
-                </>
-              )}
 
-              {!isGameOver && (
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => setShowLeaderboard(true)}
-                  className="menu-btn w-full py-4 md:py-5 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 md:gap-3 focus:outline-none focus:ring-4 focus:ring-white/50"
-                >
-                  <Trophy className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" /> LEADERBOARD
-                </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setShowLeaderboard(true)}
+                    className="menu-btn w-full py-4 md:py-5 bg-neutral-800 text-white font-black text-lg md:text-xl rounded-sm hover:bg-neutral-700 flex items-center justify-center gap-2 md:gap-3 focus:outline-none focus:ring-4 focus:ring-white/50"
+                  >
+                    <Trophy className="w-6 h-6 md:w-8 md:h-8 text-yellow-500" /> LEADERBOARD
+                  </motion.button>
+                </>
               )}
             </div>
 
@@ -2220,6 +2378,17 @@ export default function App() {
       )}
 
         {/* Modals removed to simplify flow */}
+
+        {/* Admin Panel Modal */}
+        <AnimatePresence>
+          {showAdminPanel && isAdmin && (
+            <AdminPanel 
+              onClose={() => setShowAdminPanel(false)} 
+              db={db} 
+              currentUser={user} 
+            />
+          )}
+        </AnimatePresence>
 
         {/* Level Selector Modal */}
         <AnimatePresence>
@@ -2459,6 +2628,40 @@ export default function App() {
                             placeholder="https://example.com/background.jpg"
                           />
                         </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-red-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Music className="w-4 h-4"/> Ruby Song URL</label>
+                          <input 
+                            type="text" 
+                            value={customLevelDraft.rubySongUrl || ''}
+                            onChange={e => setCustomLevelDraft(prev => ({ ...prev, rubySongUrl: e.target.value }))}
+                            className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-red-500 transition-colors text-xs"
+                            placeholder="https://example.com/ruby.mp3"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-emerald-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Music className="w-4 h-4"/> Emerald Song URL</label>
+                          <input 
+                            type="text" 
+                            value={customLevelDraft.emeraldSongUrl || ''}
+                            onChange={e => setCustomLevelDraft(prev => ({ ...prev, emeraldSongUrl: e.target.value }))}
+                            className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors text-xs"
+                            placeholder="https://example.com/emerald.mp3"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-cyan-500/60 mb-2 uppercase tracking-widest flex items-center gap-2"><Image className="w-4 h-4"/> Meteorite Background URL</label>
+                        <input 
+                          type="text" 
+                          value={customLevelDraft.meteoriteBackgroundUrl || ''}
+                          onChange={e => setCustomLevelDraft(prev => ({ ...prev, meteoriteBackgroundUrl: e.target.value }))}
+                          className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white font-bold focus:outline-none focus:border-cyan-500 transition-colors text-xs"
+                          placeholder="https://example.com/meteorite-bg.jpg"
+                        />
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
